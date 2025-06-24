@@ -1,0 +1,74 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+env/
+venv/
+multimodal-ai/
+
+# VS Code, PyCharm, etc.
+.vscode/
+.idea/
+
+# Logs
+*.log
+*.log.*
+
+# Jupyter/IPython
+.ipynb_checkpoints/
+
+# PyInstaller
+*.spec
+dist/
+build/
+
+# Datasets & Images
+dataset/
+data/
+temp_*.jpg
+temp_*.png
+*.jpeg
+*.jpg
+*.png
+
+# Model checkpoints
+*.pth
+*.pt
+*.h5
+*.ckpt
+
+# HuggingFace cache & models
+huggingface/
+transformers_cache/
+~/.cache/huggingface/
+models--*/
+
+# Uploads & outputs
+uploads/
+outputs/
+*.mp3
+*.wav
+*.pdf
+
+# Supabase secrets (if any)
+.supabase/
+
+# FastAPI files
+*.db
+*.sqlite
+*.pid
+
+# Node.js / React frontend (if exists)
+node_modules/
+build/
+dist/
+.next/
+.env
+
+# OS-specific
+.DS_Store
+Thumbs.db 
+backend/blip-image-captioning-base/

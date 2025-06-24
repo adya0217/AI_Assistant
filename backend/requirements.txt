@@ -1,0 +1,31 @@
+# Core Computer Vision and ML
+opencv-python==4.8.1.78
+torch>=2.6.0
+torchvision>=0.17.0
+ultralytics==8.0.196
+Pillow==10.0.1
+
+# Transformers and NLP Models
+transformers==4.35.0
+datasets==2.14.5
+accelerate==0.24.1
+
+# Specific Model Dependencies
+timm==0.9.7
+sentencepiece==0.1.99
+
+# Image Processing and Visualization
+matplotlib==3.8.0
+numpy<2
+scikit-image==0.21.0
+
+# Utilities
+requests==2.31.0
+tqdm==4.66.1
+
+# API and Server
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+
