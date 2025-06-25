@@ -66,9 +66,10 @@ node_modules/
 build/
 dist/
 .next/
-.env
+
 
 # OS-specific
 .DS_Store
 Thumbs.db 
 backend/blip-image-captioning-base/
+backend/models--Salesforce--blip-image-captioning-base/
