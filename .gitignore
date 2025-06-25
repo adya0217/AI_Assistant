@@ -73,3 +73,14 @@ backend/models
 Thumbs.db 
 backend/blip-image-captioning-base/
 backend/models--Salesforce--blip-image-captioning-base/
+
+
+*.h5
+*.bin
+*.safetensors
+
+tsserver.js
+tsserverlibrary.js
+typescript.js
+typescriptServices.js
+typingsInstaller.js
