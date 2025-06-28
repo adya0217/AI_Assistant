@@ -74,13 +74,30 @@ Thumbs.db
 backend/blip-image-captioning-base/
 backend/models--Salesforce--blip-image-captioning-base/
 
-
+# Large model files and datasets
 *.h5
 *.bin
 *.safetensors
+*.zip
+*.tar.gz
+*.rar
+*.7z
 
+# Specific large files
+backend/yolov8n.pt
+backend/models/vit/vit_finetuned.pth
+backend/models/yolo/best.pt
+dataset.zip
+
+# TypeScript server files
 tsserver.js
 tsserverlibrary.js
 typescript.js
 typescriptServices.js
 typingsInstaller.js
+
+# Additional model directories
+backend/models--*/
+backend/*.pt
+backend/*.pth
+backend/*.safetensors
