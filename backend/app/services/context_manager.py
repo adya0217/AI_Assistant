@@ -7,10 +7,6 @@ from app.config.system_config import config
 logger = logging.getLogger(__name__)
 
 class ContextManager:
-    """
-    Enhanced context manager for multimodal AI assistant
-    Acts as ChatGPT-style memory for conversation history and context
-    """
     
     def __init__(self):
         self.image_context: Dict[str, Dict[str, Any]] = {}
@@ -20,7 +16,6 @@ class ContextManager:
         self.max_history_length = config.CONTEXT_HISTORY_LIMIT
         
     def add_image_analysis(self, image_id: str, analysis: Dict[str, Any]):
-        """Store comprehensive image analysis results"""
         self.image_context[image_id] = {
             'analysis': analysis,
             'timestamp': datetime.now().isoformat(),
@@ -29,11 +24,9 @@ class ContextManager:
         logger.info(f"Stored image analysis for {image_id}")
     
     def get_image_analysis(self, image_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve image analysis results"""
         return self.image_context.get(image_id, {}).get('analysis')
     
     def get_latest_image_context(self) -> Optional[Dict[str, Any]]:
-        """Get the most recent image analysis for context"""
         if not self.image_context:
             return None
         
@@ -42,7 +35,6 @@ class ContextManager:
         return self.image_context[latest_id]['analysis']
     
     def add_voice_transcription(self, session_id: str, transcription: str):
-        """Store voice transcription for context"""
         self.voice_context[session_id] = {
             'transcription': transcription,
             'timestamp': datetime.now().isoformat(),
@@ -51,12 +43,10 @@ class ContextManager:
         logger.info(f"Stored voice transcription for session {session_id}")
     
     def get_voice_context(self, session_id: str) -> Optional[str]:
-        """Retrieve voice transcription"""
         return self.voice_context.get(session_id, {}).get('transcription')
     
     def add_to_history(self, message: str, response: str, input_type: str = "text", 
                       metadata: Optional[Dict[str, Any]] = None):
-        """Add message and response to conversation history with enhanced metadata"""
         history_entry = {
             "message": message,
             "response": response,
@@ -73,7 +63,6 @@ class ContextManager:
         logger.info(f"Added {input_type} interaction to conversation history")
     
     def get_recent_history(self, limit: int = 10, input_type: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Get recent conversation history with optional filtering"""
         if limit <= 0:
             limit = min(10, self.max_history_length)
         
@@ -85,7 +74,6 @@ class ContextManager:
         return history
     
     def get_context_summary(self) -> Dict[str, Any]:
-        """Get a summary of current context for LLM processing"""
         return {
             'recent_messages': len(self.conversation_history),
             'active_images': len(self.image_context),
@@ -96,16 +84,13 @@ class ContextManager:
         }
     
     def set_session_context(self, session_data: Dict[str, Any]):
-        """Set current session context"""
         self.current_session.update(session_data)
         self.current_session['last_updated'] = datetime.now().isoformat()
     
     def get_session_context(self) -> Dict[str, Any]:
-        """Get current session context"""
         return self.current_session.copy()
     
     def clear_context(self, context_type: Optional[str] = None):
-        """Clear specific or all stored context"""
         if context_type == "images":
             self.image_context.clear()
             logger.info("Cleared image context")
@@ -126,7 +111,6 @@ class ContextManager:
             logger.info("Cleared all context")
     
     def cleanup_old_context(self, days: int = None):
-        """Clean up old context entries based on retention policy"""
         if days is None:
             days = config.EMBEDDING_RETENTION_DAYS
         
@@ -155,7 +139,6 @@ class ContextManager:
         logger.info(f"Cleaned up context older than {days} days")
     
     def export_context(self) -> Dict[str, Any]:
-        """Export current context for debugging or persistence"""
         return {
             'image_context': self.image_context,
             'voice_context': self.voice_context,
@@ -169,7 +152,6 @@ class ContextManager:
         }
     
     def import_context(self, context_data: Dict[str, Any]):
-        """Import context from exported data"""
         self.image_context = context_data.get('image_context', {})
         self.voice_context = context_data.get('voice_context', {})
         self.conversation_history = context_data.get('conversation_history', [])
@@ -177,7 +159,6 @@ class ContextManager:
         logger.info("Imported context data")
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get detailed statistics about context usage"""
         return {
             'total_images': len(self.image_context),
             'total_voice_sessions': len(self.voice_context),

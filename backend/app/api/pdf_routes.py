@@ -44,9 +44,9 @@ def chunk_text(text: str, chunk_size: int = 500):
 
 @router.post("/upload_pdf/")
 async def upload_pdf(file: UploadFile = File(...)) -> Dict:
-    """
-    Uploads a PDF, extracts text, chunks it, embeds, and stores embeddings in Supabase.
-    """
+    
+    #Uploads a PDF, extracts text, chunks it, embeds, and stores embeddings in Supabase.
+    
     file_ext = os.path.splitext(file.filename)[1]
     if file_ext.lower() != ".pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")

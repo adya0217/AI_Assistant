@@ -22,10 +22,6 @@ from PIL import Image
 BLIP_LOCAL_PATH = os.getenv("BLIP_LOCAL_PATH", "blip-image-captioning-base")
 
 class ClassroomImageAnalyzer:
-    """
-    Comprehensive image analysis system for classroom AI assistant
-    Handles multiple subjects from primary to 10th grade
-    """
     
     def __init__(self):
         self.setup_logging()
@@ -37,7 +33,6 @@ class ClassroomImageAnalyzer:
         self.logger = logging.getLogger(__name__)
         
     def load_models(self):
-        """Load all required models for comprehensive image analysis"""
         try:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             yolo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../models/yolo/best.pt'))
@@ -100,7 +95,6 @@ class ClassroomImageAnalyzer:
             raise
             
     def initialize_subject_mapping(self) -> Dict[str, List[str]]:
-        """Map subjects to relevant keywords for better context understanding"""
         return {
             'mathematics': [
                 'equation', 'graph', 'formula', 'geometric', 'algebra', 'calculus',
@@ -219,7 +213,6 @@ class ClassroomImageAnalyzer:
             return "Unable to process visual question"
     
     def identify_subject_context(self, text: str, objects: List[str], caption: str) -> str:
-        """Identify the most likely subject based on content analysis"""
         combined_text = f"{text} {' '.join(objects)} {caption}".lower()
         
         subject_scores = {}
@@ -233,7 +226,6 @@ class ClassroomImageAnalyzer:
         return "general"
     
     def generate_educational_explanation(self, image_analysis: Dict[str, Any]) -> str:
-        """Generate a general educational explanation for any image."""
         text_content = image_analysis.get('text', '')
         objects = [d['class'] for d in image_analysis.get('objects', [])]
         caption = image_analysis.get('caption', '')
@@ -244,7 +236,6 @@ class ClassroomImageAnalyzer:
         return self.generate_general_explanation(text_content, objects, caption)
 
     def generate_general_explanation(self, text: str, objects: List[str], caption: str) -> str:
-        """Generate general explanations for non-specific content"""
         explanation = "I've analyzed this image and found the following:\n\n"
         
         if text:
@@ -263,7 +254,6 @@ class ClassroomImageAnalyzer:
         return explanation
 
     def generate_historical_explanation(self, text: str, objects: List[str], caption: str) -> str:
-        """Generate specific explanations for historical monuments and landmarks"""
         explanation = "I've analyzed this historical image and found the following:\n\n"
        
         if text:
@@ -279,7 +269,6 @@ class ClassroomImageAnalyzer:
         return explanation
     
     def get_image_embedding(self, image: np.ndarray) -> np.ndarray:
-        """Generate embedding for a given image using the fine-tuned ViT model."""
         self.logger.info("[ViT Embedding] Starting embedding generation")
         try:
             pil_image = Image.fromarray(image).convert('RGB')
@@ -396,9 +385,6 @@ class ClassroomImageAnalyzer:
             return {'error': str(e)}
 
     def generate_unified_explanation(self, classification: Dict[str, str], analysis: Dict[str, Any]) -> str:
-        """
-        Generates a single, context-aware explanation based on the final classification.
-        """
         category = classification.get("category")
         prediction = classification.get("prediction")
 

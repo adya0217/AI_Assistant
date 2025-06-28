@@ -17,14 +17,14 @@ from sentence_transformers import SentenceTransformer
 from fastapi.responses import StreamingResponse
 import asyncio
 
-# Configure logging
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Validate environment variables
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -102,7 +102,7 @@ class ConfigResponse(BaseModel):
 
 
 def store_query_embedding(query: str):
-    """Background task to store query embedding"""
+    
     try:
         embedding = get_embedding(query)
         supabase.table("user_queries").insert({
@@ -115,7 +115,7 @@ def store_query_embedding(query: str):
         logger.error(f"Error storing query embedding: {e}")
 
 def cleanup_old_embeddings():
-    """Background task to cleanup old embeddings based on config"""
+   
     try:
         
         embedding_retention = config.get_retention_timedelta("embedding")
@@ -136,7 +136,7 @@ def cleanup_old_embeddings():
         logger.error(f"Error cleaning up old embeddings: {e}")
 
 def sanitize_query(query: str) -> str:
-    """Sanitize and normalize incoming queries using config limits"""
+    
     if not query:
         return ""
     
@@ -144,15 +144,15 @@ def sanitize_query(query: str) -> str:
     cleaned = query.strip()
     
     cleaned = cleaned.replace('\n', ' ')
-    # Remove multiple spaces
+    
     cleaned = ' '.join(cleaned.split())
-    # Limit length based on config
+    
     cleaned = cleaned[:config.MAX_QUERY_LENGTH] if len(cleaned) > config.MAX_QUERY_LENGTH else cleaned
     
     return cleaned
 
 def validate_file_upload(file: UploadFile, file_type: str) -> bool:
-    """Validate file upload based on config settings"""
+    
     if not file:
         return False
     
@@ -166,24 +166,22 @@ def validate_file_upload(file: UploadFile, file_type: str) -> bool:
 
 @router.post("/ask_text", response_model=TextResponse)
 async def ask_from_text(request: TextRequest, background_tasks: BackgroundTasks):
-    """
-    Process text-only input with context awareness
-    """
+    
     try:
-        # Sanitize input
+        
         clean_query = sanitize_query(request.query)
         if not clean_query:
             raise HTTPException(status_code=400, detail="Query cannot be empty")
         
         logger.info(f"Received text request: {clean_query[:50]}...")
         
-        # Add background task for embedding storage
+        
         background_tasks.add_task(store_query_embedding, clean_query)
         
-        # Get latest image context if available
+        
         latest_image_context = context_manager.get_latest_image_context()
         
-        # Process with multimodal chain
+        
         response = multimodal_chain.process_multimodal_input(
             query=clean_query,
             image_analysis=latest_image_context,
@@ -199,35 +197,33 @@ async def ask_from_text(request: TextRequest, background_tasks: BackgroundTasks)
 
 @router.post("/ask/voice", response_model=VoiceResponse)
 async def ask_from_voice(file: UploadFile = File(...)):
-    """
-    Process voice input: Whisper → Text → LLM Response
-    """
+    
     temp_path = "temp_audio.wav"
     session_id = str(uuid.uuid4())
     
     try:
-        # Validate file upload
+        
         if not validate_file_upload(file, "audio"):
             raise HTTPException(status_code=400, detail="Invalid audio file type")
         
         logger.info(f"Received voice file: {file.filename}")
         
-        # Save the audio file temporarily
+        
         contents = await file.read()
         with open(temp_path, "wb") as f:
             f.write(contents)
         
-        # Transcribe audio using Whisper
+        
         transcription = transcribe_audio(temp_path)
         logger.info(f"Transcribed text: {transcription}")
         
-        # Sanitize transcription
+        
         clean_transcription = sanitize_query(transcription)
         
-        # Store voice context
+       
         context_manager.add_voice_transcription(session_id, clean_transcription)
         
-        # Process with multimodal chain
+        
         response = multimodal_chain.process_multimodal_input(
             query=clean_transcription,
             voice_transcription=clean_transcription,
@@ -246,7 +242,7 @@ async def ask_from_voice(file: UploadFile = File(...)):
         logger.error(f"Error processing voice request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Clean up temporary file
+        
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
@@ -255,23 +251,21 @@ async def ask_from_image(
     file: UploadFile = File(...),
     query: Optional[str] = Form("Please analyze this image and provide a detailed description.")
 ):
-    """
-    Process image input: OpenCV/YOLO/VIT → Analysis → LLM Response
-    """
+    
     image_id = str(uuid.uuid4())
     temp_path = None
     
     try:
-        # Validate file upload
+        
         if not validate_file_upload(file, "image"):
             raise HTTPException(status_code=400, detail="Invalid image file type")
         
         logger.info(f"Received image file: {file.filename}")
         
-        # Sanitize query
+        
         clean_query = sanitize_query(query) if query else "Please analyze this image and provide a detailed description."
         
-        # Save the image file temporarily
+        
         contents = await file.read()
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file received")
@@ -280,16 +274,16 @@ async def ask_from_image(
         with open(temp_path, "wb") as f:
             f.write(contents)
         
-        # Analyze image using comprehensive analyzer
+       
         analysis_result = image_analyzer.analyze_image_comprehensive(temp_path)
         
         if 'error' in analysis_result:
             raise HTTPException(status_code=500, detail=analysis_result['error'])
         
-        # Store the analysis in context
+       
         context_manager.add_image_analysis(image_id, analysis_result)
         
-        # Process with multimodal chain
+        
         response = multimodal_chain.process_multimodal_input(
             query=clean_query,
             image_analysis=analysis_result,
@@ -309,24 +303,22 @@ async def ask_from_image(
         logger.error(f"Error processing image request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Clean up temporary file
+        
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
 @router.post("/multimodal", response_model=MultimodalResponse)
 async def process_multimodal(request: MultimodalRequest):
-    """
-    Process multimodal input combining multiple input types
-    """
+    
     try:
-        # Sanitize query
+       
         clean_query = sanitize_query(request.query)
         if not clean_query:
             raise HTTPException(status_code=400, detail="Query cannot be empty")
         
         logger.info(f"Received multimodal request: {request.input_type}")
         
-        # Get relevant context based on input type
+        
         image_analysis = None
         voice_transcription = None
         
@@ -336,7 +328,7 @@ async def process_multimodal(request: MultimodalRequest):
         if request.voice_transcription:
             voice_transcription = sanitize_query(request.voice_transcription)
         
-        # Process with multimodal chain
+       
         response = multimodal_chain.process_multimodal_input(
             query=clean_query,
             voice_transcription=voice_transcription,
@@ -359,9 +351,7 @@ async def process_multimodal(request: MultimodalRequest):
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """
-    General chat endpoint with context awareness
-    """
+   
     try:
         # Sanitize message
         clean_message = sanitize_query(request.message)
@@ -370,17 +360,17 @@ async def chat(request: ChatRequest):
         
         logger.info(f"Received chat request: {clean_message[:50]}... (type: {request.type})")
         
-        # Get latest context
+       
         latest_image_context = context_manager.get_latest_image_context()
         
-        # Process with appropriate input type
+        
         response = multimodal_chain.process_multimodal_input(
             query=clean_message,
             image_analysis=latest_image_context,
             input_type=request.type
         )
         
-        # Create response with timestamp
+        
         chat_response = ChatResponse(
             message=response,
             timestamp=datetime.now().strftime("%H:%M:%S"),
@@ -396,9 +386,7 @@ async def chat(request: ChatRequest):
 
 @router.get("/context/summary", response_model=ContextSummaryResponse)
 async def get_context_summary():
-    """
-    Get current context summary for debugging
-    """
+   
     try:
         summary = context_manager.get_context_summary()
         return ContextSummaryResponse(**summary)
@@ -408,9 +396,7 @@ async def get_context_summary():
 
 @router.post("/context/clear", response_model=ContextClearResponse)
 async def clear_context(context_type: Optional[str] = None):
-    """
-    Clear specific or all context
-    """
+    
     try:
         context_manager.clear_context(context_type)
         return ContextClearResponse(status="success", cleared=context_type or "all")
@@ -420,9 +406,7 @@ async def clear_context(context_type: Optional[str] = None):
 
 @router.get("/config", response_model=ConfigResponse)
 async def get_system_config():
-    """
-    Get current system configuration
-    """
+   
     try:
         return ConfigResponse(**config.get_config_summary())
     except Exception as e:
@@ -431,9 +415,7 @@ async def get_system_config():
 
 @router.post("/maintenance/cleanup")
 async def trigger_cleanup(background_tasks: BackgroundTasks):
-    """
-    Trigger cleanup of old embeddings (admin endpoint)
-    """
+   
     try:
         background_tasks.add_task(cleanup_old_embeddings)
         return {"status": "success", "message": "Cleanup task scheduled"}
@@ -446,33 +428,25 @@ def sse_format(data: str) -> str:
 
 @router.post("/stream_chat")
 async def stream_chat(request: ChatRequest):
-    """
-    Stream LLM response tokens to the client using SSE.
-    """
+    
     query = request.message
     input_type = request.type
-    # Optionally, add support for voice/image/multimodal
-    # For now, just text streaming
     
     async def event_generator():
-        # Use retrieval-augmented context
-        # (Assume multimodal_chain.llm supports async streaming)
-        # Compose context as in process_multimodal_input
+       
         multimodal_chain.store_kb_entry(query, role="user")
         history_context = multimodal_chain._build_history_context()
         retrieval_context = multimodal_chain.build_retrieval_context(query)
         context = f"{history_context}\n{retrieval_context}".strip()
         chain_input = {"context": context, "query": query}
         chain = multimodal_chain.chat_prompt | multimodal_chain.llm
-        # Streaming: yield tokens as they are generated
+        
         try:
             async for chunk in chain.astream(chain_input):
                 if chunk:
                     yield sse_format(chunk)
-                    await asyncio.sleep(0)  # Yield control
-            # Store the full response in KB and history
-            # (Assume chain.astream yields the full response at the end)
-            # Optionally, collect and store the full response here
+                    await asyncio.sleep(0)  
+            
         except Exception as e:
             yield sse_format(f"[ERROR] {str(e)}")
     

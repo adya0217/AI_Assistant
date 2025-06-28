@@ -5,7 +5,6 @@ import os
 from torchvision import transforms
 
 def load_vit_model(weights_path):
-    """Load the trained ViT model for landmark/historical classification"""
     try:
         model = models.vit_b_16(pretrained=False)
         model.heads.head = nn.Linear(model.heads.head.in_features, 2)
@@ -29,7 +28,6 @@ def load_vit_model(weights_path):
         return None, []
 
 def predict_vit_class(image, model, class_names, topk=3):
-    """Predict class using ViT model"""
     try:
         transform = transforms.Compose([
             transforms.Resize((224, 224)),

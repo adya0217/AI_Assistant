@@ -26,7 +26,7 @@ class UnifiedRequest(BaseModel):
     include_analysis: bool = True
 
 class UnifiedResponse(BaseModel):
-    """Response model for unified multimodal analysis"""
+   
     response: str
     input_types: List[str]
     analysis_summary: Dict[str, Any]
@@ -64,14 +64,7 @@ async def unified_analyze(
     include_analysis: bool = Form(True),
     background_tasks: BackgroundTasks = None
 ):
-    """
-    Unified multimodal analysis endpoint that can handle:
-    - Text input
-    - Voice input (Whisper → Text)
-    - Image input (OpenCV/YOLO/VIT → Analysis)
-    - Combined multimodal input
-    """
-    
+   
     session_id = str(uuid.uuid4())
     temp_files = []
     

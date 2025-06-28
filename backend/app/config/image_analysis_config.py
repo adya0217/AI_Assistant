@@ -113,16 +113,4 @@ def get_device_info() -> Dict[str, Any]:
         "cuda_device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
         "cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None",
         "memory_allocated": f"{torch.cuda.memory_allocated(0) / 1024**2:.2f} MB" if torch.cuda.is_available() else "N/A"
-    }
-
-def get_optimization_recommendations() -> Dict[str, str]:
-    """Get optimization recommendations based on current hardware"""
-    recommendations = {}
-    
-    if not torch.cuda.is_available():
-        recommendations["hardware"] = "Consider using GPU for better performance"
-    
-    if torch.cuda.is_available() and torch.cuda.get_device_properties(0).total_memory < 6 * 1024**3:
-        recommendations["memory"] = "Consider using smaller models or model quantization"
-    
-    return recommendations 
+    } 
