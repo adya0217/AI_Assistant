@@ -1,16 +1,15 @@
 import os
 import warnings
 
-# Suppress FutureWarnings globally
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# Fix OpenMP runtime conflict (prevents libiomp5md.dll multiple init errors)
+
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-# Suppress verbose TensorFlow logs
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-# Suppress HuggingFace transformers PyTree deprecation warnings
+
 import transformers
 transformers.utils.logging.set_verbosity_error()
 
@@ -21,7 +20,7 @@ from torch.nn.modules.batchnorm import BatchNorm2d
 import ultralytics.nn.tasks
 import torch.nn.modules.container
 
-# For PyTorch model loading security (YOLO related)
+
 torch.serialization.add_safe_globals([
     Conv,
     Conv2d,

@@ -273,7 +273,7 @@ class ClassroomImageAnalyzer:
     def generate_historical_explanation(self, text: str, objects: List[str], caption: str) -> str:
         """Generate specific explanations for historical monuments and landmarks"""
         explanation = "I've analyzed this historical image and found the following:\n\n"
-        # Only provide general context, do not use hardcoded landmark_info
+       
         if text:
             explanation += f"Text Content: {text}\n"
         if objects:
@@ -424,10 +424,10 @@ class ClassroomImageAnalyzer:
             return f"This appears to be a **{item_name}**. It is {description}"
 
         if category == "landmark_historical":
-            # For now, use the historical explanation, can be expanded later
+           
             return self.generate_historical_explanation(analysis.get('text', ''), [], "")
 
-        # Fallback for "unknown" or other categories
+       
         object_list = ", ".join(set(analysis.get('objects', [])))
         if object_list:
             return f"This image appears to contain: **{object_list}**. I can provide more details if you ask a specific question."

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from app.services.whisper_stt import transcribe_audio  # FIXED: changed '..' to 'app'
+from app.services.whisper_stt import transcribe_audio 
 import os
 import uuid
 
@@ -21,6 +21,6 @@ async def transcribe_audio_route(file: UploadFile = File(...)):
         os.remove(file_path)
         return {"status": "success", "transcription": text}
     except Exception as e:
-        if file_path and os.path.exists(file_path):  # FIXED: ensure file_path is not None
+        if file_path and os.path.exists(file_path): 
             os.remove(file_path)
         raise HTTPException(status_code=500, detail=str(e))
