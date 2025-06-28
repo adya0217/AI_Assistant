@@ -1,5 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form
-from app.services.classroom_image_analyzer import ClassroomImageAnalyzer  # FIXED
+from app.services.classroom_image_analyzer import ClassroomImageAnalyzer  
 from app.services.context_manager import context_manager
 import os
 from typing import Dict, List
@@ -30,10 +30,10 @@ async def analyze_image(file: UploadFile = File(...), text: str = Form(None), qu
         analysis_result = image_analyzer.analyze_image_comprehensive(file_path, questions, user_text=text)
         os.remove(file_path)
 
-        # Store analysis in context manager
+        
         context_manager.add_image_analysis(image_id, analysis_result)
 
-        # If user provided a question (text), answer it using the LLM and analysis context
+        t
         llm_answer = None
         if text:
             from app.services.llm_chain import get_llm_response

@@ -17,10 +17,8 @@ def record_audio(duration=5):
 def transcribe_audio(audio_path):
     """Transcribe audio file using Whisper"""
     if isinstance(audio_path, str) and os.path.exists(audio_path):
-        # Handle file path
         return model.transcribe(audio_path)["text"]
     elif isinstance(audio_path, np.ndarray):
-        # Handle numpy array (for backward compatibility)
         return model.transcribe(audio_path)["text"]
     else:
         raise ValueError(f"Invalid audio input: {type(audio_path)}")

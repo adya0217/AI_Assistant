@@ -37,7 +37,6 @@ class ContextManager:
         if not self.image_context:
             return None
         
-        # Get the most recent image analysis
         latest_id = max(self.image_context.keys(), 
                        key=lambda k: self.image_context[k]['timestamp'])
         return self.image_context[latest_id]['analysis']
@@ -68,7 +67,6 @@ class ContextManager:
         
         self.conversation_history.append(history_entry)
         
-        # Maintain history length based on config
         if len(self.conversation_history) > self.max_history_length:
             self.conversation_history.pop(0)
         
@@ -76,7 +74,6 @@ class ContextManager:
     
     def get_recent_history(self, limit: int = 10, input_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get recent conversation history with optional filtering"""
-        # Use config limit if not specified
         if limit <= 0:
             limit = min(10, self.max_history_length)
         
@@ -122,7 +119,6 @@ class ContextManager:
             self.current_session.clear()
             logger.info("Cleared session context")
         else:
-            # Clear all
             self.image_context.clear()
             self.voice_context.clear()
             self.conversation_history.clear()
@@ -137,7 +133,6 @@ class ContextManager:
         cutoff_date = datetime.now().isoformat()
         cutoff_timestamp = datetime.now().timestamp() - (days * 24 * 60 * 60)
         
-        # Clean up old image context
         old_image_ids = [
             img_id for img_id, data in self.image_context.items()
             if datetime.fromisoformat(data['timestamp']).timestamp() < cutoff_timestamp
@@ -145,7 +140,6 @@ class ContextManager:
         for img_id in old_image_ids:
             del self.image_context[img_id]
         
-        # Clean up old voice context
         old_voice_ids = [
             voice_id for voice_id, data in self.voice_context.items()
             if datetime.fromisoformat(data['timestamp']).timestamp() < cutoff_timestamp
@@ -153,7 +147,6 @@ class ContextManager:
         for voice_id in old_voice_ids:
             del self.voice_context[voice_id]
         
-        # Clean up old conversation history
         self.conversation_history = [
             entry for entry in self.conversation_history
             if datetime.fromisoformat(entry['timestamp']).timestamp() >= cutoff_timestamp
@@ -197,5 +190,4 @@ class ContextManager:
             'session_active': bool(self.current_session)
         }
 
-# Create a global instance
 context_manager = ContextManager() 

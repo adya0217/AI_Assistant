@@ -19,7 +19,7 @@ from torchvision.transforms import Compose, Resize, ToTensor, Normalize
 from torchvision.models import vit_b_16
 from PIL import Image
 
-BLIP_LOCAL_PATH = os.getenv("BLIP_LOCAL_PATH", "blip-image-captioning-base")  # Update this path as needed
+BLIP_LOCAL_PATH = os.getenv("BLIP_LOCAL_PATH", "blip-image-captioning-base")
 
 class ClassroomImageAnalyzer:
     """
@@ -40,31 +40,25 @@ class ClassroomImageAnalyzer:
         """Load all required models for comprehensive image analysis"""
         try:
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            # Object Detection - YOLO for general objects, educational materials
             yolo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../models/yolo/best.pt'))
             print("Loading YOLO from:", yolo_path)
-            self.yolo_model = YOLO(yolo_path)  # Use absolute path for YOLO checkpoint
+            self.yolo_model = YOLO(yolo_path)
             
-            # OCR for text extraction from images
             self.ocr_processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed', use_fast=True)
             self.ocr_model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed')
             
-            # Image captioning and visual question answering
             self.blip_processor = BlipProcessor.from_pretrained(BLIP_LOCAL_PATH, use_fast=True)
             self.blip_model = BlipForConditionalGeneration.from_pretrained(BLIP_LOCAL_PATH)
             
-            # Visual Question Answering for detailed explanations
             self.vqa_pipeline = pipeline("visual-question-answering", 
                                        model="dandelin/vilt-b32-finetuned-vqa")
 
-            # ViT model for landmark/historical classification
             vit_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../models/vit/vit_finetuned.pth'))
             print("Loading ViT for classification and embeddings from:", vit_path)
             state_dict = torch.load(vit_path, map_location=self.device)
             num_classes = state_dict['heads.head.weight'].shape[0]
             print(f"Detected num_classes in checkpoint: {num_classes}")
 
-            # Auto-load class names from both dataset/landmark/ and dataset/History/
             landmark_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../dataset/landmark'))
             history_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../dataset/History'))
             class_names = set()
@@ -77,14 +71,12 @@ class ClassroomImageAnalyzer:
             self.vit_classes = sorted(class_names)
             print(f"Loaded {len(self.vit_classes)} class names for ViT: {self.vit_classes}")
 
-            # Classification model
             self.vit_model = vit_b_16(weights=None)
             self.vit_model.heads.head = torch.nn.Linear(self.vit_model.heads.head.in_features, num_classes)
             self.vit_model.load_state_dict(state_dict)
             self.vit_model.to(self.device)
             self.vit_model.eval()
 
-            # Embedding model (share backbone, just swap head)
             self.embedding_model = vit_b_16(weights=None)
             self.embedding_model.heads.head = torch.nn.Linear(self.embedding_model.heads.head.in_features, num_classes)
             self.embedding_model.load_state_dict(state_dict)
@@ -333,29 +325,24 @@ class ClassroomImageAnalyzer:
             self.logger.error("[ANALYZE] Image preprocessing failed")
             return {'error': 'Could not process image'}
         try:
-            # 1. Run YOLO
             objects_info = self.detect_objects(image)
             yolo_detections = objects_info['detections']
             yolo_conf = self._get_highest_confidence_yolo(yolo_detections)
             yolo_label = self._get_most_confident_label_yolo(yolo_detections)
             self.logger.info(f"[ANALYZE] YOLO highest confidence: {yolo_conf}, label: {yolo_label}")
 
-            # 2. Run ViT
             vit_result = self.classify_vit(image)
             vit_label = vit_result['top_k'][0][0] if vit_result else None
             vit_conf = vit_result['top_k'][0][1] if vit_result else 0.0
             self.logger.info(f"[ANALYZE] ViT label: {vit_label}, confidence: {vit_conf}")
 
-            # 3. Run BLIP
             caption = self.generate_image_caption(image)
             self.logger.info(f"[ANALYZE] BLIP caption: {caption}")
 
-            # 4. OCR (optional, always run for context)
             ocr_text = self.extract_text_ocr(image)
             self.logger.info(f"[ANALYZE] OCR text: {ocr_text}")
             text_content = user_text if user_text else ocr_text
 
-            # 5. Decide final prediction
             if yolo_detections and yolo_conf > 0.6:
                 final_prediction = {
                     'type': 'lab_apparatus',
@@ -378,12 +365,10 @@ class ClassroomImageAnalyzer:
                 }
                 self.logger.info(f"[ANALYZE] Final prediction: BLIP (caption_only)")
 
-            # 6. Subject context (for LLM)
             object_names = [d['class'] for d in yolo_detections]
             subject = self.identify_subject_context(text_content, object_names, caption)
             self.logger.info(f"[ANALYZE] Subject: {subject}")
 
-            # 7. Visual QA (if any questions)
             qa_results = {}
             if specific_questions:
                 for question in specific_questions:
@@ -391,7 +376,6 @@ class ClassroomImageAnalyzer:
                     qa_results[question] = answer
                     self.logger.info(f"[ANALYZE] Visual QA: {question} -> {answer}")
 
-            # 8. Build result
             analysis_result = {
                 'objects': yolo_detections,
                 'text': text_content,

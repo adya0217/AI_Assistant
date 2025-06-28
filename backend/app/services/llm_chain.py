@@ -30,12 +30,11 @@ class MultimodalChain:
     def __init__(self):
         self.llm = OllamaLLM(model="mistral")
         self.setup_prompts()
-        self.k_retrieval = 4  # Number of similar items to retrieve
+        self.k_retrieval = 4
         
     def setup_prompts(self):
         """Setup different prompt templates for various input types"""
         
-        # Main multimodal prompt template
         self.multimodal_prompt = PromptTemplate.from_template(
             """You are an advanced AI assistant with multimodal capabilities. You can process:
 - Text input from users
@@ -59,7 +58,6 @@ User Query: {query}
 Provide a comprehensive, educational response:"""
         )
         
-        # Voice-specific prompt
         self.voice_prompt = PromptTemplate.from_template(
             """You are processing a voice input that has been transcribed to text.
 The user said: "{transcription}"
@@ -69,7 +67,6 @@ The user said: "{transcription}"
 Please respond naturally as if the user spoke to you directly:"""
         )
         
-        # Image-specific prompt  
         self.image_prompt = PromptTemplate.from_template(
             """You are analyzing an image with the following computer vision results:
 
@@ -83,7 +80,6 @@ User Question: {query}
 Provide a detailed, educational explanation of what you see in the image:"""
         )
         
-        # General chat prompt
         self.chat_prompt = PromptTemplate.from_template(
             """You are a helpful AI assistant for educational purposes.
 
@@ -149,32 +145,6 @@ Assistant:"""
         query_embedding = self.embed_text(text)
         
         try:
-            # NOTE: The 'match_queries' function needs to be created in your Supabase SQL editor.
-            # This function should take a query embedding and a match count.
-            # Example SQL for creating the function (make sure vector size matches your embedding model):
-            #
-            # CREATE OR REPLACE FUNCTION match_queries (
-            #   p_query_embedding vector(384), -- for 'all-MiniLM-L6-v2'
-            #   p_match_count int
-            # )
-            # RETURNS TABLE (
-            #   id bigint,
-            #   query text,
-            #   role text,
-            #   timestamp timestamptz,
-            #   similarity float
-            # )
-            # LANGUAGE sql STABLE AS $$
-            #   SELECT
-            #     uq.id,
-            #     uq.query,
-            #     uq.role,
-            #     uq.timestamp,
-            #     1 - (uq.embedding <=> p_query_embedding) as similarity
-            #   FROM user_queries uq
-            #   ORDER BY similarity DESC
-            #   LIMIT p_match_count;
-            # $$;
             res = supabase.rpc(
                 "match_queries",
                 {"p_query_embedding": query_embedding, "p_match_count": k}
@@ -194,7 +164,6 @@ Assistant:"""
             return ""
         context = "\n---\nRetrieved Knowledge:\n"
         for item in retrieved:
-            # The 'match_queries' function returns 'similarity'. We can use it to filter irrelevant results.
             if item.get("similarity", 0) > 0.75:
                 role = item.get("role", "user")
                 text = item.get("query", "")
@@ -213,17 +182,12 @@ Assistant:"""
         """
         try:
             logger.info(f"Processing {input_type} input: {query}")
-            # Store user query in KB
             self.store_kb_entry(query, role="user")
-            # Get conversation history
             history_context = self._build_history_context()
-            # Retrieval-augmented context
             retrieval_context = self.build_retrieval_context(query)
-            # Build input analysis based on type
             input_analysis = self._build_input_analysis(
                 query, voice_transcription, image_analysis, input_type
             )
-            # Select appropriate prompt
             if input_type == "voice":
                 prompt = self.voice_prompt
                 context = history_context
@@ -247,7 +211,7 @@ Assistant:"""
                     "input_analysis": input_analysis,
                     "query": query
                 }
-            else:  # text
+            else:
                 prompt = self.chat_prompt
                 context = history_context
                 chain_input = {
@@ -255,17 +219,13 @@ Assistant:"""
                     "query": query
                 }
             
-            # Compose context
             context = f"{history_context}\n{retrieval_context}".strip()
             
-            # Create and run chain
             chain = prompt | self.llm
             logger.info(f"Running {input_type} chain with retrieval context")
             response = chain.invoke(chain_input)
             
-            # Store LLM response in KB
             self.store_kb_entry(response, role="assistant")
-            # Store in conversation history
             context_manager.add_to_history(query, response)
             logger.info(f"Generated response: {response[:100]}...")
             return response.strip()
@@ -314,7 +274,6 @@ Assistant:"""
             
         formatted = []
         
-        # Prioritize the final, synthesized prediction from the analyzer
         if 'final_prediction' in image_analysis:
             pred = image_analysis['final_prediction']
             pred_type = pred.get('type', 'unknown').replace('_', ' ').title()
@@ -322,24 +281,19 @@ Assistant:"""
             confidence = pred.get('confidence', 0)
             formatted.append(f"Primary Identification: The system identified this as a '{label}' ({pred_type}) with a confidence of {confidence:.2f}.")
 
-        # Add the general caption as supporting context
         if 'caption' in image_analysis and image_analysis['caption']:
             formatted.append(f"General Scene Caption: {image_analysis['caption']}")
             
-        # Add any extracted text as hard evidence
         if 'text' in image_analysis and image_analysis['text']:
             formatted.append(f"Extracted Text from Image: {image_analysis['text']}")
             
         return "\n".join(formatted) if formatted else "Basic image analysis completed, but no specific objects were identified."
 
-# Create global instance
 multimodal_chain = MultimodalChain()
 
-# Backward compatibility function
 def get_llm_response(query: str, image_context: str = None) -> str:
     """Legacy function for backward compatibility"""
     if image_context:
-        # Convert string context to dict format
         image_analysis = {"explanation": image_context}
         return multimodal_chain.process_multimodal_input(
             query, image_analysis=image_analysis, input_type="image"

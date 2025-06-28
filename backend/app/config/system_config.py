@@ -1,46 +1,40 @@
-"""
-System configuration for the multimodal AI assistant
-Manages retention settings, limits, and system parameters
-"""
-
 import os
 from typing import Dict, Any
 from datetime import timedelta
 
 class SystemConfig:
-    """Central configuration management for the system"""
+  
     
-    # Retention Settings
+    
     EMBEDDING_RETENTION_DAYS = int(os.getenv("EMBEDDING_RETENTION_DAYS", "30"))
     DOCUMENT_RETENTION_DAYS = int(os.getenv("DOCUMENT_RETENTION_DAYS", "90"))
     CONTEXT_HISTORY_LIMIT = int(os.getenv("CONTEXT_HISTORY_LIMIT", "50"))
     
-    # Input Limits
+   
     MAX_QUERY_LENGTH = int(os.getenv("MAX_QUERY_LENGTH", "1000"))
     MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "10"))
     MAX_IMAGE_DIMENSION = int(os.getenv("MAX_IMAGE_DIMENSION", "2048"))
     
-    # Processing Limits
+    
     MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "10"))
     REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "60"))
     
-    # Model Settings
     LLM_MODEL = os.getenv("LLM_MODEL", "mistral")
     STT_MODEL = os.getenv("STT_MODEL", "base")
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     
-    # Background Task Settings
+    
     BACKGROUND_TASK_TIMEOUT = int(os.getenv("BACKGROUND_TASK_TIMEOUT", "300"))
     CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
     
-    # Security Settings
+    
     ALLOWED_FILE_TYPES = {
         "image": [".jpg", ".jpeg", ".png", ".webp", ".gif"],
         "audio": [".wav", ".mp3", ".m4a", ".webm"],
         "document": [".pdf", ".txt", ".doc", ".docx"]
     }
     
-    # Educational Settings
+    
     SUBJECT_KEYWORDS = {
         'mathematics': [
             'equation', 'graph', 'formula', 'geometric', 'algebra', 'calculus',
@@ -113,5 +107,4 @@ class SystemConfig:
             "allowed_file_types": cls.ALLOWED_FILE_TYPES
         }
 
-# Global configuration instance
 config = SystemConfig() 

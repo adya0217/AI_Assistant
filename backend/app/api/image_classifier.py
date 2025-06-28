@@ -12,13 +12,13 @@ import logging
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Load models once at startup
+
 try:
-    # Load YOLO model for lab apparatus detection
+    
     yolo_model = YOLO('backend/models/yolo/best.pt')
     print("YOLO model loaded successfully")
     
-    # Load ViT model for landmark/historical classification
+    
     vit_model, vit_classes = load_vit_model("models/vit/vit_landmark_history.pth")
     print("ViT model loaded successfully")
     
@@ -103,7 +103,7 @@ async def classify_image(file: UploadFile = File(...)):
             results["model_used"] = "ViT"
             results["category"] = "landmark_historical"
         else:
-            # No confident prediction
+           
             results["final_prediction"] = "unknown"
             results["confidence"] = max(yolo_conf, vit_conf)
             results["model_used"] = "none"
@@ -133,7 +133,7 @@ async def classify_image_detailed(file: UploadFile = File(...)):
             "summary": {}
         }
         
-        # Run YOLO detection
+        
         if yolo_model:
             try:
                 yolo_results = yolo_model.predict(img, conf=0.3)
@@ -153,7 +153,7 @@ async def classify_image_detailed(file: UploadFile = File(...)):
             except Exception as e:
                 logger.error(f"YOLO detailed prediction error: {e}")
         
-        # Run ViT classification
+        
         if vit_model and vit_classes:
             try:
                 vit_result = predict_vit_class(img, vit_model, vit_classes)
@@ -162,7 +162,7 @@ async def classify_image_detailed(file: UploadFile = File(...)):
             except Exception as e:
                 logger.error(f"ViT detailed prediction error: {e}")
         
-        # Create summary
+        
         if results["yolo_detections"]:
             results["summary"]["has_lab_apparatus"] = True
             results["summary"]["lab_apparatus_count"] = len(results["yolo_detections"])

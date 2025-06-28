@@ -14,11 +14,11 @@ from app.services.context_manager import context_manager
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Initialize components
+
 image_analyzer = ClassroomImageAnalyzer()
 
 class UnifiedRequest(BaseModel):
-    """Request model for unified multimodal analysis"""
+    
     text_query: Optional[str] = None
     voice_file: Optional[UploadFile] = None
     image_file: Optional[UploadFile] = None
@@ -44,13 +44,13 @@ def sanitize_input(text: str) -> str:
     if not text:
         return ""
     
-    # Remove extra whitespace and normalize
+    
     cleaned = text.strip()
-    # Replace newlines with spaces
+    
     cleaned = cleaned.replace('\n', ' ')
-    # Remove multiple spaces
+    
     cleaned = ' '.join(cleaned.split())
-    # Limit length to prevent abuse
+    
     cleaned = cleaned[:1000] if len(cleaned) > 1000 else cleaned
     
     return cleaned
@@ -78,18 +78,18 @@ async def unified_analyze(
     try:
         logger.info(f"Starting unified analysis session: {session_id}")
         
-        # Track input types and analysis results
+        
         input_types = []
         voice_transcription = None
         image_analysis = None
         final_query = sanitize_input(text_query) if text_query else ""
         
-        # Process voice input if provided
+        
         if voice_file:
             logger.info("Processing voice input...")
             input_types.append("voice")
             
-            # Save and transcribe voice file
+            
             temp_voice_path = f"temp_voice_{session_id}.wav"
             temp_files.append(temp_voice_path)
             
@@ -97,26 +97,26 @@ async def unified_analyze(
             with open(temp_voice_path, "wb") as f:
                 f.write(contents)
             
-            # Transcribe using Whisper
+           
             voice_transcription = transcribe_audio(temp_voice_path)
             logger.info(f"Voice transcription: {voice_transcription}")
             
-            # Sanitize transcription
+           
             clean_transcription = sanitize_input(voice_transcription)
             
-            # Store voice context
+          
             context_manager.add_voice_transcription(session_id, clean_transcription)
             
-            # Use transcription as query if no text query provided
+            
             if not final_query:
                 final_query = clean_transcription
         
-        # Process image input if provided
+        
         if image_file:
             logger.info("Processing image input...")
             input_types.append("image")
             
-            # Save image file
+            
             temp_image_path = f"temp_image_{session_id}.jpg"
             temp_files.append(temp_image_path)
             
@@ -124,10 +124,10 @@ async def unified_analyze(
             with open(temp_image_path, "wb") as f:
                 f.write(contents)
             
-            # Analyze image using comprehensive analyzer
+            
             image_analysis = image_analyzer.analyze_image_comprehensive(temp_image_path)
 
-            # Generate, store, and query for similar image embeddings
+            
             similar_images = []
             image_embedding = image_analyzer.get_image_embedding(image_analyzer.preprocess_image(temp_image_path))
             if image_embedding.size > 0:
@@ -141,33 +141,32 @@ async def unified_analyze(
             if 'error' in image_analysis:
                 raise HTTPException(status_code=500, detail=image_analysis['error'])
             
-            # Store image analysis in context
+            
             image_id = str(uuid.uuid4())
             context_manager.add_image_analysis(image_id, image_analysis)
             
             logger.info(f"Image analysis completed: {len(image_analysis.get('objects', []))} objects detected")
         
-        # Add text input type if text was provided
+        
         if text_query:
             input_types.append("text")
         
-        # Determine input type for multimodal chain
-        if len(input_types) > 1:
+        
             chain_input_type = "multimodal"
         elif len(input_types) == 1:
             chain_input_type = input_types[0]
         else:
             raise HTTPException(status_code=400, detail="No input provided")
         
-        # Use custom prompt if provided, otherwise use default
+        
         if custom_prompt:
             final_query = sanitize_input(custom_prompt)
         
-        # Validate final query
+        
         if not final_query:
             raise HTTPException(status_code=400, detail="No valid query provided")
         
-        # Process with multimodal chain
+        
         logger.info(f"Processing with {chain_input_type} chain...")
         response = multimodal_chain.process_multimodal_input(
             query=final_query,
@@ -176,7 +175,7 @@ async def unified_analyze(
             input_type=chain_input_type
         )
         
-        # Build analysis summary
+        
         analysis_summary = {
             "input_types": input_types,
             "chain_type": chain_input_type,
@@ -187,7 +186,7 @@ async def unified_analyze(
             "context_summary": context_manager.get_context_summary()
         }
         
-        # Create response
+        
         unified_response = UnifiedResponse(
             response=response,
             input_types=input_types,
@@ -204,7 +203,7 @@ async def unified_analyze(
         raise HTTPException(status_code=500, detail=str(e))
     
     finally:
-        # Clean up temporary files
+        
         for temp_file in temp_files:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
@@ -219,8 +218,7 @@ async def unified_stream(
     """
     Streaming version of unified analysis for real-time responses
     """
-    # This would implement streaming responses
-    # For now, return the same as analyze endpoint
+    
     return await unified_analyze(text_query, voice_file, image_file)
 
 @router.get("/capabilities", response_model=UnifiedCapabilitiesResponse)

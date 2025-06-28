@@ -41,7 +41,7 @@ def get_embedding(text):
 router = APIRouter()
 image_analyzer = ClassroomImageAnalyzer()
 
-# Response Models for consistency
+
 class ChatRequest(BaseModel):
     message: str
     type: str = "text"
@@ -100,7 +100,7 @@ class ConfigResponse(BaseModel):
     background_tasks: dict
     allowed_file_types: dict
 
-# Background task functions
+
 def store_query_embedding(query: str):
     """Background task to store query embedding"""
     try:
@@ -117,18 +117,18 @@ def store_query_embedding(query: str):
 def cleanup_old_embeddings():
     """Background task to cleanup old embeddings based on config"""
     try:
-        # Get retention periods from config
+        
         embedding_retention = config.get_retention_timedelta("embedding")
         document_retention = config.get_retention_timedelta("document")
         
-        # Calculate cutoff dates
+        
         embedding_cutoff = datetime.now() - embedding_retention
         document_cutoff = datetime.now() - document_retention
         
-        # Clean up old user queries
+        
         supabase.table("user_queries").delete().lt("timestamp", embedding_cutoff.isoformat()).execute()
         
-        # Clean up old documents
+        
         supabase.table("documents").delete().lt("created_at", document_cutoff.isoformat()).execute()
         
         logger.info(f"Cleaned up embeddings older than {embedding_cutoff.date()} and documents older than {document_cutoff.date()}")
@@ -140,9 +140,9 @@ def sanitize_query(query: str) -> str:
     if not query:
         return ""
     
-    # Remove extra whitespace and normalize
+    
     cleaned = query.strip()
-    # Replace newlines with spaces
+    
     cleaned = cleaned.replace('\n', ' ')
     # Remove multiple spaces
     cleaned = ' '.join(cleaned.split())
@@ -156,13 +156,12 @@ def validate_file_upload(file: UploadFile, file_type: str) -> bool:
     if not file:
         return False
     
-    # Check file type
+  
     if not config.validate_file_type(file.filename, file_type):
         logger.warning(f"Invalid file type: {file.filename} for type {file_type}")
         return False
     
-    # Check file size (basic check, actual size would be checked after upload)
-    # This is a placeholder - actual size validation would be done after reading the file
+    
     return True
 
 @router.post("/ask_text", response_model=TextResponse)

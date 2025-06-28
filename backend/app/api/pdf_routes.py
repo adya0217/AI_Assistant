@@ -1,6 +1,6 @@
 import os
 import uuid
-import fitz  # PyMuPDF
+import fitz  
 import logging
 from typing import Dict
 from fastapi import APIRouter, UploadFile, File, HTTPException
@@ -8,23 +8,23 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from sentence_transformers import SentenceTransformer
 
-# Load environment variables
+
 load_dotenv()
 
-# Initialize router and directories
+
 router = APIRouter()
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Initialize Supabase
+
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Initialize embedding model
+
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Setup logger
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
