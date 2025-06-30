@@ -19,7 +19,7 @@ class SystemConfig:
     MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "10"))
     REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "60"))
     
-    LLM_MODEL = os.getenv("LLM_MODEL", "mistral")
+    LLM_MODEL = os.getenv("LLM_MODEL", "mistral:instruct")
     STT_MODEL = os.getenv("STT_MODEL", "base")
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     
@@ -62,6 +62,8 @@ class SystemConfig:
             'literature', 'poem', 'story', 'essay', 'letter'
         ]
     }
+    
+    MAX_RESPONSE_TOKENS = int(os.getenv("MAX_RESPONSE_TOKENS", "30"))
     
     @classmethod
     def get_retention_timedelta(cls, data_type: str = "embedding") -> timedelta:

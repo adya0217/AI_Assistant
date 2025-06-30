@@ -8,6 +8,10 @@ import os
 import uuid
 from app.utils.vit_model import load_vit_model, predict_vit_class
 import logging
+import time
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+from optimum.intel.openvino import OVModelForVision2Seq
+from app.config.openvino_config import OpenVINOConfig
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -28,18 +32,79 @@ except Exception as e:
     vit_model = None
     vit_classes = []
 
+class ImageClassifier:
+    def __init__(self):
+        self.model = None
+        self.processor = None
+        self.load_model()
+
+    def load_model(self):
+        """Load TrOCR model with OpenVINO optimization if available"""
+        try:
+            model_id = OpenVINOConfig.TROCR_MODEL_NAME
+            
+            # Always load processor
+            self.processor = TrOCRProcessor.from_pretrained(model_id)
+            
+            if OpenVINOConfig.should_use_openvino():
+                cache_path = OpenVINOConfig.get_model_cache_path("trocr-base-printed")
+                
+                if not os.path.exists(cache_path):
+                    print(f"Exporting TrOCR to OpenVINO format at {cache_path}...")
+                    try:
+                        self.model = OpenVINOConfig.export_model(model_id, cache_path)
+                        print("✅ TrOCR exported to OpenVINO format successfully")
+                    except Exception as e:
+                        print(f"❌ Failed to export TrOCR to OpenVINO: {e}")
+                        print("Falling back to PyTorch TrOCR model.")
+                        self.model = VisionEncoderDecoderModel.from_pretrained(model_id)
+                else:
+                    try:
+                        self.model = OVModelForVision2Seq.from_pretrained(cache_path)
+                        self.model.to("AUTO")
+                        self.model.compile()
+                        print("✅ OpenVINO TrOCR model loaded and compiled successfully")
+                    except Exception as e:
+                        print(f"❌ Failed to load OpenVINO TrOCR model: {e}")
+                        print("Falling back to PyTorch TrOCR model.")
+                        self.model = VisionEncoderDecoderModel.from_pretrained(model_id)
+            else:
+                print("ℹ️ OpenVINO disabled, using PyTorch TrOCR model.")
+                self.model = VisionEncoderDecoderModel.from_pretrained(model_id)
+                
+        except Exception as e:
+            print(f"❌ Error loading TrOCR model: {e}")
+            self.model = None
+
+    def process_image(self, image):
+        """Process an image using TrOCR model"""
+        if self.model is None or self.processor is None:
+            return "Error: Model not loaded"
+            
+        try:
+            # Prepare image
+            pixel_values = self.processor(image, return_tensors="pt").pixel_values
+            
+            # Generate
+            generated_ids = self.model.generate(pixel_values)
+            
+            # Decode
+            generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+            return generated_text
+            
+        except Exception as e:
+            print(f"Error processing image: {e}")
+            return f"Error processing image: {str(e)}"
+
 @router.post("/classify-image")
 async def classify_image(file: UploadFile = File(...)):
-    """
-    Classify image using both YOLO and ViT models
-    Returns the best prediction based on confidence scores
-    """
+    start_time = time.time()
+    logger.info(f"[classify_image] Request received: {file.filename}")
     try:
-        logger.info(f"/classify-image endpoint called. Filename: {file.filename}")
         img_bytes = await file.read()
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        logger.info("Image loaded for classification.")
-        
+        logger.info("[classify_image] Image loaded for classification.")
+        model_start = time.time()
         results = {
             "yolo_prediction": None,
             "vit_prediction": None,
@@ -71,9 +136,9 @@ async def classify_image(file: UploadFile = File(...)):
                             "detections": len(result.boxes)
                         }
                         
-                        logger.info(f"YOLO detected: {detected_class} with confidence {max_confidence}")
+                        logger.info(f"[classify_image] YOLO detected: {detected_class} with confidence {max_confidence}")
             except Exception as e:
-                logger.error(f"YOLO prediction error: {e}")
+                logger.error(f"[classify_image] YOLO prediction error: {e}")
         
         # Run ViT classification (for landmarks/historical)
         if vit_model and vit_classes:
@@ -82,9 +147,9 @@ async def classify_image(file: UploadFile = File(...)):
                 
                 if vit_result:
                     results["vit_prediction"] = vit_result
-                    logger.info(f"ViT predicted: {vit_result['class']} with confidence {vit_result['confidence']}")
+                    logger.info(f"[classify_image] ViT predicted: {vit_result['class']} with confidence {vit_result['confidence']}")
             except Exception as e:
-                logger.error(f"ViT prediction error: {e}")
+                logger.error(f"[classify_image] ViT prediction error: {e}")
         
         # Determine final prediction based on confidence
         yolo_conf = results["yolo_prediction"]["confidence"] if results["yolo_prediction"] else 0.0
@@ -109,30 +174,30 @@ async def classify_image(file: UploadFile = File(...)):
             results["model_used"] = "none"
             results["category"] = "unknown"
         
-        logger.info(f"Classification result: {results}")
+        model_time = time.time() - model_start
+        total_time = time.time() - start_time
+        logger.info(f"[classify_image] Model(s) response in {model_time:.2f}s, total time {total_time:.2f}s")
+        logger.info(f"[classify_image] Classification result: {results}")
         return JSONResponse(results)
         
     except Exception as e:
-        logger.error(f"Error in /classify-image endpoint: {e}")
+        logger.error(f"[classify_image] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
 @router.post("/classify-image-detailed")
 async def classify_image_detailed(file: UploadFile = File(...)):
-    """
-    Detailed classification with all model outputs
-    """
+    start_time = time.time()
+    logger.info(f"[classify_image_detailed] Request received: {file.filename}")
     try:
-        logger.info(f"/classify-image-detailed endpoint called. Filename: {file.filename}")
         img_bytes = await file.read()
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        logger.info("Image loaded for detailed classification.")
-        
+        logger.info("[classify_image_detailed] Image loaded for detailed classification.")
+        model_start = time.time()
         results = {
             "yolo_detections": [],
             "vit_classification": None,
             "summary": {}
         }
-        
         
         if yolo_model:
             try:
@@ -149,18 +214,18 @@ async def classify_image_detailed(file: UploadFile = File(...)):
                                 "bbox": result.boxes.xyxy[i].cpu().numpy().tolist()
                             }
                             results["yolo_detections"].append(detection)
-                        logger.info(f"YOLO detailed detections: {results['yolo_detections']}")
+                        logger.info(f"[classify_image_detailed] YOLO detailed detections: {results['yolo_detections']}")
             except Exception as e:
-                logger.error(f"YOLO detailed prediction error: {e}")
+                logger.error(f"[classify_image_detailed] YOLO detailed prediction error: {e}")
         
         
         if vit_model and vit_classes:
             try:
                 vit_result = predict_vit_class(img, vit_model, vit_classes)
                 results["vit_classification"] = vit_result
-                logger.info(f"ViT detailed classification: {vit_result}")
+                logger.info(f"[classify_image_detailed] ViT detailed classification: {vit_result}")
             except Exception as e:
-                logger.error(f"ViT detailed prediction error: {e}")
+                logger.error(f"[classify_image_detailed] ViT detailed prediction error: {e}")
         
         
         if results["yolo_detections"]:
@@ -180,9 +245,12 @@ async def classify_image_detailed(file: UploadFile = File(...)):
         else:
             results["summary"]["is_landmark_or_historical"] = False
         
-        logger.info(f"Detailed classification summary: {results['summary']}")
+        model_time = time.time() - model_start
+        total_time = time.time() - start_time
+        logger.info(f"[classify_image_detailed] Model(s) response in {model_time:.2f}s, total time {total_time:.2f}s")
+        logger.info(f"[classify_image_detailed] Detailed classification summary: {results['summary']}")
         return JSONResponse(results)
         
     except Exception as e:
-        logger.error(f"Error in /classify-image-detailed endpoint: {e}")
+        logger.error(f"[classify_image_detailed] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}") 

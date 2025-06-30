@@ -14,19 +14,16 @@ import transformers
 transformers.utils.logging.set_verbosity_error()
 
 import torch
-from ultralytics.nn.modules import Conv
-from torch.nn.modules.conv import Conv2d
-from torch.nn.modules.batchnorm import BatchNorm2d
-import ultralytics.nn.tasks
+import torch.nn.modules.conv
+import torch.nn.modules.batchnorm
 import torch.nn.modules.container
 
-
+# Add basic safe globals for PyTorch 2.6+ compatibility
 torch.serialization.add_safe_globals([
-    Conv,
-    Conv2d,
-    BatchNorm2d,
-    ultralytics.nn.tasks.DetectionModel,
-    torch.nn.modules.container.Sequential
+    torch.nn.modules.conv.Conv2d,
+    torch.nn.modules.batchnorm.BatchNorm2d,
+    torch.nn.modules.container.Sequential,
+    torch.nn.modules.container.ModuleList
 ])
 
 import logging
