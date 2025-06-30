@@ -16,6 +16,9 @@ from supabase import create_client, Client
 from sentence_transformers import SentenceTransformer
 from fastapi.responses import StreamingResponse
 import asyncio
+import time
+from pydub import AudioSegment
+import io
 
 
 logging.basicConfig(
@@ -166,222 +169,215 @@ def validate_file_upload(file: UploadFile, file_type: str) -> bool:
 
 @router.post("/ask_text", response_model=TextResponse)
 async def ask_from_text(request: TextRequest, background_tasks: BackgroundTasks):
-    
+    start_time = time.time()
+    logger.info(f"[ask_text] Request received: {request.query[:50]}...")
     try:
-        
         clean_query = sanitize_query(request.query)
         if not clean_query:
             raise HTTPException(status_code=400, detail="Query cannot be empty")
-        
-        logger.info(f"Received text request: {clean_query[:50]}...")
-        
-        
+        logger.info(f"[ask_text] Cleaned query: {clean_query[:50]}...")
         background_tasks.add_task(store_query_embedding, clean_query)
-        
-        
         latest_image_context = context_manager.get_latest_image_context()
-        
-        
+        model_start = time.time()
+        logger.info("[ask_text] Calling LLM...")
         response = multimodal_chain.process_multimodal_input(
             query=clean_query,
             image_analysis=latest_image_context,
             input_type="text"
         )
-        
-        logger.info(f"Sending text response: {response[:100]}...")
+        model_time = time.time() - model_start
+        logger.info(f"[ask_text] LLM response received in {model_time:.2f}s")
+        total_time = time.time() - start_time
+        logger.info(f"[ask_text] Sending response in {total_time:.2f}s: {response[:100]}...")
         return TextResponse(response=response, input_type="text")
-        
     except Exception as e:
-        logger.error(f"Error processing text request: {str(e)}", exc_info=True)
+        logger.error(f"[ask_text] Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ask/voice", response_model=VoiceResponse)
 async def ask_from_voice(file: UploadFile = File(...)):
-    
+    start_time = time.time()
     temp_path = "temp_audio.wav"
     session_id = str(uuid.uuid4())
-    
+    logger.info(f"[ask_voice] Request received: {file.filename}, content-type: {file.content_type}")
     try:
-        
         if not validate_file_upload(file, "audio"):
             raise HTTPException(status_code=400, detail="Invalid audio file type")
         
-        logger.info(f"Received voice file: {file.filename}")
-        
-        
         contents = await file.read()
-        with open(temp_path, "wb") as f:
-            f.write(contents)
+        logger.info(f"[ask_voice] Read {len(contents)} bytes of audio data")
         
-        
+        # Convert audio to wav
+        try:
+            logger.info("[ask_voice] Converting audio to wav format...")
+            # Try to detect format from content type or filename
+            format_hint = "webm"
+            if file.content_type and "audio/" in file.content_type:
+                format_hint = file.content_type.split("/")[-1].split(";")[0]
+            elif file.filename and "." in file.filename:
+                format_hint = file.filename.split(".")[-1]
+            
+            logger.info(f"[ask_voice] Using format hint: {format_hint}")
+            audio = AudioSegment.from_file(
+                io.BytesIO(contents),
+                format=format_hint,
+                codec="opus" if format_hint == "webm" else None
+            )
+            audio = audio.set_frame_rate(16000)  # Ensure 16kHz sample rate for Whisper
+            audio.export(temp_path, format="wav", parameters=["-ac", "1"])  # Force mono channel
+            logger.info(f"[ask_voice] Successfully converted to wav: {temp_path}")
+        except Exception as e:
+            logger.error(f"[ask_voice] Audio conversion failed: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not process audio format. Please ensure you're sending a WebM/Opus format. Error: {str(e)}"
+            )
+
+        logger.info("[ask_voice] Starting transcription...")
+        transcribe_start = time.time()
         transcription = transcribe_audio(temp_path)
-        logger.info(f"Transcribed text: {transcription}")
-        
-        
+        transcribe_time = time.time() - transcribe_start
+        logger.info(f"[ask_voice] Transcribed text in {transcribe_time:.2f}s: {transcription[:100]}")
         clean_transcription = sanitize_query(transcription)
-        
-       
         context_manager.add_voice_transcription(session_id, clean_transcription)
-        
-        
+        model_start = time.time()
+        logger.info("[ask_voice] Calling LLM...")
         response = multimodal_chain.process_multimodal_input(
             query=clean_transcription,
             voice_transcription=clean_transcription,
             input_type="voice"
         )
-        
-        logger.info(f"Sending voice response: {response[:100]}...")
+        model_time = time.time() - model_start
+        total_time = time.time() - start_time
+        logger.info(f"[ask_voice] LLM response in {model_time:.2f}s, total time {total_time:.2f}s")
         return VoiceResponse(
             response=response, 
             transcription=clean_transcription,
             input_type="voice",
             session_id=session_id
         )
-        
     except Exception as e:
-        logger.error(f"Error processing voice request: {str(e)}", exc_info=True)
+        logger.error(f"[ask_voice] Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        
         if os.path.exists(temp_path):
             os.remove(temp_path)
+            logger.info(f"[ask_voice] Temp file {temp_path} removed.")
 
 @router.post("/ask/image", response_model=ImageResponse)
 async def ask_from_image(
     file: UploadFile = File(...),
     query: Optional[str] = Form("Please analyze this image and provide a detailed description.")
 ):
-    
+    start_time = time.time()
     image_id = str(uuid.uuid4())
     temp_path = None
-    
+    logger.info(f"[ask_image] Request received: {file.filename}")
     try:
-        
         if not validate_file_upload(file, "image"):
             raise HTTPException(status_code=400, detail="Invalid image file type")
-        
-        logger.info(f"Received image file: {file.filename}")
-        
-        
         clean_query = sanitize_query(query) if query else "Please analyze this image and provide a detailed description."
-        
-        
         contents = await file.read()
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file received")
-            
         temp_path = f"temp_{image_id}.jpg"
         with open(temp_path, "wb") as f:
             f.write(contents)
-        
-       
+        logger.info("[ask_image] File saved, starting analysis...")
+        analysis_start = time.time()
         analysis_result = image_analyzer.analyze_image_comprehensive(temp_path)
-        
+        analysis_time = time.time() - analysis_start
+        logger.info(f"[ask_image] Image analysis in {analysis_time:.2f}s")
         if 'error' in analysis_result:
             raise HTTPException(status_code=500, detail=analysis_result['error'])
-        
-       
         context_manager.add_image_analysis(image_id, analysis_result)
-        
-        
+        model_start = time.time()
+        logger.info("[ask_image] Calling LLM...")
         response = multimodal_chain.process_multimodal_input(
             query=clean_query,
             image_analysis=analysis_result,
             input_type="image"
         )
-        
-        logger.info(f"Sending image response: {response[:100]}...")
-        
+        model_time = time.time() - model_start
+        total_time = time.time() - start_time
+        logger.info(f"[ask_image] LLM response in {model_time:.2f}s, total time {total_time:.2f}s")
         return ImageResponse(
             response=response,
             analysis=analysis_result,
             input_type="image",
             image_id=image_id
         )
-                
     except Exception as e:
-        logger.error(f"Error processing image request: {str(e)}", exc_info=True)
+        logger.error(f"[ask_image] Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
+            logger.info(f"[ask_image] Temp file {temp_path} removed.")
 
 @router.post("/multimodal", response_model=MultimodalResponse)
 async def process_multimodal(request: MultimodalRequest):
-    
+    start_time = time.time()
+    logger.info(f"[multimodal] Request received: {request.input_type}")
     try:
-       
         clean_query = sanitize_query(request.query)
         if not clean_query:
             raise HTTPException(status_code=400, detail="Query cannot be empty")
-        
-        logger.info(f"Received multimodal request: {request.input_type}")
-        
-        
         image_analysis = None
         voice_transcription = None
-        
         if request.image_id:
             image_analysis = context_manager.get_image_analysis(request.image_id)
-        
         if request.voice_transcription:
             voice_transcription = sanitize_query(request.voice_transcription)
-        
-       
+        model_start = time.time()
+        logger.info("[multimodal] Calling LLM...")
         response = multimodal_chain.process_multimodal_input(
             query=clean_query,
             voice_transcription=voice_transcription,
             image_analysis=image_analysis,
             input_type=request.input_type
         )
-        
-        logger.info(f"Sending multimodal response: {response[:100]}...")
-        
+        model_time = time.time() - model_start
+        total_time = time.time() - start_time
+        logger.info(f"[multimodal] LLM response in {model_time:.2f}s, total time {total_time:.2f}s")
         return MultimodalResponse(
             response=response,
             input_type=request.input_type,
             image_analysis=image_analysis is not None,
             voice_transcription=voice_transcription is not None
         )
-        
     except Exception as e:
-        logger.error(f"Error processing multimodal request: {str(e)}", exc_info=True)
+        logger.error(f"[multimodal] Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-   
+    start_time = time.time()
+    logger.info(f"[chat] Request received: {request.message[:50]}... (type: {request.type})")
     try:
-        # Sanitize message
         clean_message = sanitize_query(request.message)
         if not clean_message:
             raise HTTPException(status_code=400, detail="Message cannot be empty")
-        
-        logger.info(f"Received chat request: {clean_message[:50]}... (type: {request.type})")
-        
-       
         latest_image_context = context_manager.get_latest_image_context()
-        
-        
+        model_start = time.time()
+        logger.info("[chat] Calling LLM...")
         response = multimodal_chain.process_multimodal_input(
             query=clean_message,
             image_analysis=latest_image_context,
             input_type=request.type
         )
-        
-        
+        model_time = time.time() - model_start
+        total_time = time.time() - start_time
+        logger.info(f"[chat] LLM response in {model_time:.2f}s, total time {total_time:.2f}s")
         chat_response = ChatResponse(
             message=response,
             timestamp=datetime.now().strftime("%H:%M:%S"),
             input_type=request.type
         )
-        
-        logger.info(f"Sending chat response: {chat_response.message[:100]}...")
+        logger.info(f"[chat] Sending response: {chat_response.message[:100]}...")
         return chat_response
-        
     except Exception as e:
-        logger.error(f"Error processing chat request: {str(e)}", exc_info=True)
+        logger.error(f"[chat] Error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/context/summary", response_model=ContextSummaryResponse)

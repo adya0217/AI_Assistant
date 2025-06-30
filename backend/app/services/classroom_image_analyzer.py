@@ -18,8 +18,20 @@ from app.utils.vit_model import load_vit_model, predict_vit_class
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize
 from torchvision.models import vit_b_16
 from PIL import Image
+from app.config.openvino_config import OpenVINOConfig
+from app.config.system_config import SystemConfig as config
+from torch import serialization
 
 BLIP_LOCAL_PATH = os.getenv("BLIP_LOCAL_PATH", "blip-image-captioning-base")
+
+# Add safe globals for PyTorch 2.6 compatibility
+SAFE_GLOBALS = [
+    'ultralytics.nn.modules.head.Detect',
+    'ultralytics.nn.modules.block.C2f',
+    'ultralytics.nn.modules.conv.Conv',
+    'ultralytics.nn.modules.block.SPPF',
+    'ultralytics.nn.modules.block.Bottleneck'
+]
 
 class ClassroomImageAnalyzer:
     
@@ -34,50 +46,129 @@ class ClassroomImageAnalyzer:
         
     def load_models(self):
         try:
+            import torch  
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            
+           
             yolo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../models/yolo/best.pt'))
             print("Loading YOLO from:", yolo_path)
-            self.yolo_model = YOLO(yolo_path)
             
-            self.ocr_processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed', use_fast=True)
-            self.ocr_model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed')
+           
+            for global_name in SAFE_GLOBALS:
+                serialization.add_safe_globals([global_name])
             
-            self.blip_processor = BlipProcessor.from_pretrained(BLIP_LOCAL_PATH, use_fast=True)
-            self.blip_model = BlipForConditionalGeneration.from_pretrained(BLIP_LOCAL_PATH)
+            print(f"Added {', '.join(SAFE_GLOBALS)} to safe globals for YOLO loading")
+            
+            
+            try:
+                self.yolo_model = YOLO(yolo_path)
+                print("YOLO model loaded successfully with default settings")
+            except Exception as e:
+                print(f"YOLO loading failed with default settings: {e}")
+                print("Trying alternative loading method...")
+                
+                # Alternative: Load with weights_only=False
+                try:
+                    # Load directly with torch.load and weights_only=False for trusted source
+                    checkpoint = torch.load(yolo_path, map_location='cpu')
+
+                    print("YOLO checkpoint loaded successfully with weights_only=False")
+                    
+                    # Create YOLO model from checkpoint
+                    self.yolo_model = YOLO(yolo_path)
+                    print("YOLO model loaded successfully with weights_only=False")
+                    
+                except Exception as e2:
+                    print(f"Alternative YOLO loading also failed: {e2}")
+                    print("YOLO model will not be available")
+                    self.yolo_model = None
+            
+           
+            self.ocr_processor, self.ocr_model = self._load_ocr_models()
+            
+            # Load BLIP models with OpenVINO optimization
+            self.blip_processor, self.blip_model = self._load_blip_models()
             
             self.vqa_pipeline = pipeline("visual-question-answering", 
                                        model="dandelin/vilt-b32-finetuned-vqa")
 
+            # Load ViT model with improved class names handling
             vit_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../models/vit/vit_finetuned.pth'))
             print("Loading ViT for classification and embeddings from:", vit_path)
-            state_dict = torch.load(vit_path, map_location=self.device)
-            num_classes = state_dict['heads.head.weight'].shape[0]
-            print(f"Detected num_classes in checkpoint: {num_classes}")
+            
+            if os.path.exists(vit_path):
+                try:
+                    # Load class names from dataset directories first
+                    landmark_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../dataset/landmark'))
+                    history_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../dataset/History'))
+                    class_names = set()
+                    
+                    for base_dir in [landmark_dir, history_dir]:
+                        if os.path.isdir(base_dir):
+                            for entry in os.listdir(base_dir):
+                                entry_path = os.path.join(base_dir, entry)
+                                if os.path.isdir(entry_path):
+                                    class_names.add(entry)
+                    
+                    self.vit_classes = sorted(list(class_names))
+                    print(f"Found {len(self.vit_classes)} class names from dataset: {self.vit_classes}")
+                    
+                    # Load checkpoint to determine number of classes
+                    state_dict = torch.load(vit_path, map_location=self.device, weights_only=True)
+                    
+                    # Check if checkpoint has class names saved
+                    if 'class_names' in state_dict:
+                        checkpoint_classes = state_dict['class_names']
+                        print(f"Found class names in checkpoint: {checkpoint_classes}")
+                        self.vit_classes = checkpoint_classes
+                    else:
+                        print("No class names found in checkpoint, using dataset directories")
+                    
+                    # Determine number of classes from checkpoint or dataset
+                    if 'heads.head.weight' in state_dict:
+                        num_classes = state_dict['heads.head.weight'].shape[0]
+                        print(f"Detected num_classes in checkpoint: {num_classes}")
+                        
+                        # If checkpoint has different number of classes, adjust
+                        if num_classes != len(self.vit_classes):
+                            print(f"Warning: Checkpoint has {num_classes} classes but dataset has {len(self.vit_classes)} classes")
+                            print("Using checkpoint number of classes and adjusting class names")
+                            if num_classes > len(self.vit_classes):
+                                
+                                while len(self.vit_classes) < num_classes:
+                                    self.vit_classes.append(f"class_{len(self.vit_classes)}")
+                            else:
+                                
+                                self.vit_classes = self.vit_classes[:num_classes]
+                    else:
+                        num_classes = len(self.vit_classes)
+                        print(f"Using dataset number of classes: {num_classes}")
 
-            landmark_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../dataset/landmark'))
-            history_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../dataset/History'))
-            class_names = set()
-            for base_dir in [landmark_dir, history_dir]:
-                if os.path.isdir(base_dir):
-                    for entry in os.listdir(base_dir):
-                        entry_path = os.path.join(base_dir, entry)
-                        if os.path.isdir(entry_path):
-                            class_names.add(entry)
-            self.vit_classes = sorted(class_names)
-            print(f"Loaded {len(self.vit_classes)} class names for ViT: {self.vit_classes}")
+                    
+                    self.vit_model = vit_b_16(weights=None)
+                    self.vit_model.heads.head = torch.nn.Linear(self.vit_model.heads.head.in_features, num_classes)
+                    self.vit_model.load_state_dict(state_dict)
+                    self.vit_model.to(self.device)
+                    self.vit_model.eval()
 
-            self.vit_model = vit_b_16(weights=None)
-            self.vit_model.heads.head = torch.nn.Linear(self.vit_model.heads.head.in_features, num_classes)
-            self.vit_model.load_state_dict(state_dict)
-            self.vit_model.to(self.device)
-            self.vit_model.eval()
-
-            self.embedding_model = vit_b_16(weights=None)
-            self.embedding_model.heads.head = torch.nn.Linear(self.embedding_model.heads.head.in_features, num_classes)
-            self.embedding_model.load_state_dict(state_dict)
-            self.embedding_model.heads.head = torch.nn.Identity()
-            self.embedding_model.to(self.device)
-            self.embedding_model.eval()
+                    # Load embedding model
+                    self.embedding_model = vit_b_16(weights=None)
+                    self.embedding_model.heads.head = torch.nn.Linear(self.embedding_model.heads.head.in_features, num_classes)
+                    self.embedding_model.load_state_dict(state_dict)
+                    self.embedding_model.heads.head = torch.nn.Identity()
+                    self.embedding_model.to(self.device)
+                    self.embedding_model.eval()
+                    
+                    print(f"ViT model loaded successfully with {num_classes} classes: {self.vit_classes}")
+                    
+                except Exception as e:
+                    print(f"Error loading ViT weights: {e}")
+                    print("Falling back to pretrained ViT model")
+                    self._load_pretrained_vit()
+            else:
+                print(f"ViT weights not found at {vit_path}")
+                print("Falling back to pretrained ViT model")
+                self._load_pretrained_vit()
 
             self.embedding_transform = Compose([
                 Resize((224, 224)),
@@ -93,6 +184,39 @@ class ClassroomImageAnalyzer:
         except Exception as e:
             self.logger.error(f"Error loading models: {e}")
             raise
+    
+    def _load_pretrained_vit(self):
+        """Load pretrained ViT model as fallback"""
+        try:
+            print("Loading pretrained ViT model...")
+            self.vit_model = vit_b_16(weights='IMAGENET1K_V1')
+            self.vit_model.heads.head = torch.nn.Linear(self.vit_model.heads.head.in_features, 2)  # Default to 2 classes
+            self.vit_model.to(self.device)
+            self.vit_model.eval()
+            
+            self.embedding_model = vit_b_16(weights='IMAGENET1K_V1')
+            self.embedding_model.heads.head = torch.nn.Identity()
+            self.embedding_model.to(self.device)
+            self.embedding_model.eval()
+            
+            self.vit_classes = ['landmark', 'historical']  # Default classes
+            print("Pretrained ViT model loaded successfully")
+            
+        except Exception as e:
+            print(f"Error loading pretrained ViT: {e}")
+            # Create a minimal ViT model as last resort
+            self.vit_model = vit_b_16(weights=None)
+            self.vit_model.heads.head = torch.nn.Linear(self.vit_model.heads.head.in_features, 2)
+            self.vit_model.to(self.device)
+            self.vit_model.eval()
+            
+            self.embedding_model = vit_b_16(weights=None)
+            self.embedding_model.heads.head = torch.nn.Identity()
+            self.embedding_model.to(self.device)
+            self.embedding_model.eval()
+            
+            self.vit_classes = ['landmark', 'historical']
+            print("Minimal ViT model created as fallback")
             
     def initialize_subject_mapping(self) -> Dict[str, List[str]]:
         return {
@@ -186,7 +310,7 @@ class ClassroomImageAnalyzer:
             captions = []
             for prompt in prompts:
                 inputs = self.blip_processor(pil_image, text=prompt, return_tensors="pt")
-                out = self.blip_model.generate(**inputs, max_length=50, num_beams=3)
+                out = self.blip_model.generate(**inputs, max_length=config.MAX_RESPONSE_TOKENS, num_beams=3)
                 caption = self.blip_processor.decode(out[0], skip_special_tokens=True)
                 captions.append(caption)
             combined_caption = " ".join(set(captions))
@@ -403,3 +527,81 @@ class ClassroomImageAnalyzer:
             return f"This image appears to contain: **{object_list}**. I can provide more details if you ask a specific question."
         else:
             return "I've analyzed the image. What would you like to know about it?" 
+
+    def _load_ocr_models(self):
+        """Load OCR models with OpenVINO optimization if available, fallback to PyTorch if unsupported."""
+        try:
+            if OpenVINOConfig.should_use_openvino():
+                try:
+                    from optimum.intel import OVModelForSeq2SeqLM
+                    openvino_cache_path = OpenVINOConfig.get_model_cache_path("trocr-base-printed")
+                    if os.path.exists(openvino_cache_path) and not OpenVINOConfig.should_export_models():
+                        print(f"Loading OpenVINO optimized TrOCR from cache: {openvino_cache_path}")
+                        model = OVModelForSeq2SeqLM.from_pretrained(openvino_cache_path)
+                        processor = TrOCRProcessor.from_pretrained(openvino_cache_path)
+                    else:
+                        print("Exporting TrOCR to OpenVINO format...")
+                        os.makedirs(openvino_cache_path, exist_ok=True)
+                        model = OVModelForSeq2SeqLM.from_pretrained(
+                            OpenVINOConfig.TROCR_MODEL_NAME,
+                            export=True
+                        )
+                        processor = TrOCRProcessor.from_pretrained(OpenVINOConfig.TROCR_MODEL_NAME)
+                        model.save_pretrained(openvino_cache_path)
+                        processor.save_pretrained(openvino_cache_path)
+                        print(f"OpenVINO TrOCR model saved to: {openvino_cache_path}")
+                    print("OpenVINO optimized TrOCR model loaded successfully")
+                    return processor, model
+                except Exception as e:
+                    print(f"OpenVINO TrOCR not supported or failed: {e}\nFalling back to PyTorch TrOCR model.")
+                    return self._load_pytorch_ocr_models()
+            else:
+                return self._load_pytorch_ocr_models()
+        except Exception as e:
+            print(f"Error loading OCR models: {e}")
+            return self._load_pytorch_ocr_models()
+
+    def _load_pytorch_ocr_models(self):
+        """Load PyTorch TrOCR models (fallback)"""
+        processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed', use_fast=True)
+        model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed')
+        return processor, model
+    
+    def _load_blip_models(self):
+        """Load BLIP models with OpenVINO optimization if available, fallback to PyTorch if unsupported."""
+        try:
+            if OpenVINOConfig.should_use_openvino():
+                try:
+                    from optimum.intel import OVModelForSeq2SeqLM
+                    openvino_cache_path = OpenVINOConfig.get_model_cache_path("blip-image-captioning-base")
+                    if os.path.exists(openvino_cache_path) and not OpenVINOConfig.should_export_models():
+                        print(f"Loading OpenVINO optimized BLIP from cache: {openvino_cache_path}")
+                        model = OVModelForSeq2SeqLM.from_pretrained(openvino_cache_path)
+                        processor = BlipProcessor.from_pretrained(openvino_cache_path)
+                    else:
+                        print("Exporting BLIP to OpenVINO format...")
+                        os.makedirs(openvino_cache_path, exist_ok=True)
+                        model = OVModelForSeq2SeqLM.from_pretrained(
+                            OpenVINOConfig.BLIP_MODEL_NAME,
+                            export=True
+                        )
+                        processor = BlipProcessor.from_pretrained(OpenVINOConfig.BLIP_MODEL_NAME)
+                        model.save_pretrained(openvino_cache_path)
+                        processor.save_pretrained(openvino_cache_path)
+                        print(f"OpenVINO BLIP model saved to: {openvino_cache_path}")
+                    print("OpenVINO optimized BLIP model loaded successfully")
+                    return processor, model
+                except Exception as e:
+                    print(f"OpenVINO BLIP not supported or failed: {e}\nFalling back to PyTorch BLIP model.")
+                    return self._load_pytorch_blip_models()
+            else:
+                return self._load_pytorch_blip_models()
+        except Exception as e:
+            print(f"Error loading BLIP models: {e}")
+            return self._load_pytorch_blip_models()
+
+    def _load_pytorch_blip_models(self):
+        """Load PyTorch BLIP models (fallback)"""
+        processor = BlipProcessor.from_pretrained(BLIP_LOCAL_PATH, use_fast=True)
+        model = BlipForConditionalGeneration.from_pretrained(BLIP_LOCAL_PATH)
+        return processor, model 

@@ -10,6 +10,18 @@ transformers==4.35.0
 datasets==2.14.5
 accelerate==0.24.1
 
+# OpenVINO Optimization
+optimum[openvino]==1.16.1
+openvino==2023.3.0
+openvino-dev==2023.3.0
+
+# Audio Processing
+librosa==0.10.1
+
+# Database and Backend
+supabase==2.0.2
+psycopg2-binary==2.9.7
+
 # Specific Model Dependencies
 timm==0.9.7
 sentencepiece==0.1.99
@@ -28,4 +40,10 @@ fastapi==0.104.1
 uvicorn==0.24.0
 python-multipart==0.0.6
 python-dotenv==1.0.0
+
+# RAG-related dependencies
+langchain
+chromadb
+sentence-transformers
+tiktoken
 

@@ -2,6 +2,7 @@ import os
 import uuid
 import fitz  
 import logging
+import time
 from typing import Dict
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from dotenv import load_dotenv
@@ -47,7 +48,9 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
     
     #Uploads a PDF, extracts text, chunks it, embeds, and stores embeddings in Supabase.
     
+    start_time = time.time()
     file_ext = os.path.splitext(file.filename)[1]
+    logger.info(f"[upload_pdf] Request received: {file.filename}")
     if file_ext.lower() != ".pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
@@ -61,13 +64,20 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
         with open(file_path, "wb") as f:
             f.write(content)
 
-        logger.info("Extracting text from PDF...")
+        logger.info("[upload_pdf] File saved, extracting text...")
+        extract_start = time.time()
         text = extract_text_from_pdf(file_path)
+        extract_time = time.time() - extract_start
+        logger.info(f"[upload_pdf] Text extracted in {extract_time:.2f}s")
 
-        logger.info("Chunking extracted text...")
+        logger.info("[upload_pdf] Chunking extracted text...")
+        chunk_start = time.time()
         chunks = chunk_text(text)
+        chunk_time = time.time() - chunk_start
+        logger.info(f"[upload_pdf] Text chunked in {chunk_time:.2f}s")
 
-        logger.info("Embedding and uploading chunks...")
+        logger.info("[upload_pdf] Embedding and uploading chunks...")
+        embed_start = time.time()
         for i, chunk in enumerate(chunks):
             embedding = get_embedding(chunk)
             response = supabase.table("documents").insert({
@@ -76,15 +86,18 @@ async def upload_pdf(file: UploadFile = File(...)) -> Dict:
             }).execute()
             if response.get("status_code") not in [200, 201]:
                 raise Exception(f"Failed to insert chunk {i+1} into Supabase.")
+        embed_time = time.time() - embed_start
+        logger.info(f"[upload_pdf] Embedded and uploaded {len(chunks)} chunks in {embed_time:.2f}s")
 
-        logger.info(f"Successfully uploaded {len(chunks)} chunks.")
+        total_time = time.time() - start_time
+        logger.info(f"[upload_pdf] Successfully uploaded {len(chunks)} chunks. Total time: {total_time:.2f}s")
         return {"status": "success", "chunks_uploaded": len(chunks)}
 
     except Exception as e:
-        logger.error(f"Upload failed: {e}")
+        logger.error(f"[upload_pdf] Upload failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
-            logger.info("Temporary file cleaned up.")
+            logger.info("[upload_pdf] Temporary file cleaned up.")
