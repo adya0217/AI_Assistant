@@ -1,65 +1,209 @@
-# Multimodal AI Assistant - Complete Chaining System
+# Multimodal Classroom Assistant
 
-A comprehensive AI assistant that combines multiple input modalities using advanced chaining techniques with LangChain, providing educational support through text, voice, and image analysis.
+A comprehensive multimodal AI assistant for educational content, supporting image, audio, and text analysis with detailed explanations. Combines advanced chaining techniques (LangChain) for educational support through text, voice, and image analysis.
 
-## 🚀 System Architecture
+## 🚀 Quick Start
 
-### Multimodal Chaining Pipeline
+### Prerequisites
+- **Python 3.8+** (recommended: 3.9 or 3.10)
+- **Node.js 16+** and npm
+- **Git**
+- **8GB+ RAM** (16GB+ recommended)
+- **10GB+ free disk space** (20GB+ recommended)
 
+### System Requirements
+
+#### Minimum Requirements
+- 8GB RAM
+- CPU processing (slower)
+- 10GB free disk space
+- Windows 10/11, macOS 10.15+, or Ubuntu 18.04+
+
+#### Recommended Requirements
+- 16GB RAM
+- NVIDIA GPU with 6GB+ VRAM (optional but recommended)
+- 20GB free disk space
+- SSD storage
+
+#### Optimal Requirements
+- 32GB RAM
+- NVIDIA RTX 3080+ or Intel Arc GPU
+- 30GB free disk space
+- NVMe SSD
+
+## 🛠️ Installation & Setup
+
+### Step 1: Clone the Repository
+```bash
+git clone <repository-url>
+cd AI_Assistant
 ```
-Voice Input: Whisper → Text
-Image Input: OpenCV/YOLO/VIT → Description/Text  
-Text Input: Normal chat
-Context Manager: ChatGPT-style memory
-LangChain: Custom prompt control
-React Frontend: UI for multimodal inputs
+
+### Step 2: Backend Setup
+
+#### 2.1 Create Python Virtual Environment
+```bash
+cd backend
+python -m venv venv
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
 ```
 
-## 🏗️ Core Components
+#### 2.2 Install Python Dependencies
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+# (Optional) For CUDA support (NVIDIA GPU):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# Install additional dependencies for LangChain
+pip install langchain langchain-ollama langchain-core
+# Install FastAPI and Uvicorn
+pip install fastapi uvicorn python-multipart
+```
 
-### 1. **Multimodal Chain (`backend/app/services/llm_chain.py`)**
-- **Purpose**: Central orchestrator for all input types
-- **Features**:
-  - Voice processing with Whisper transcription
-  - Image analysis with OpenCV/YOLO/ViT
-  - Text processing with context awareness
-  - Educational prompt templates
-  - Conversation history management
+#### 2.3 Download AI Models
+```bash
+python download_models.py
+```
 
-### 2. **Context Manager (`backend/app/services/context_manager.py`)**
-- **Purpose**: ChatGPT-style memory system
-- **Features**:
-  - Conversation history tracking (configurable limit)
-  - Image context storage with retention policies
-  - Voice session management
-  - Context summarization and statistics
-  - Export/import capabilities
-  - Automatic cleanup of old entries
+#### 2.4 Install System Dependencies
 
-### 3. **System Configuration (`backend/app/config/system_config.py`)**
-- **Purpose**: Centralized configuration management
-- **Features**:
-  - Retention policy settings
-  - Input validation limits
-  - File type restrictions
-  - Model configuration
-  - Background task settings
+**On Windows:**
+- Install Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki
+- Add to PATH: `C:\Program Files\Tesseract-OCR`
+- (If needed) Install Visual Studio Build Tools: https://visualstudio.microsoft.com/visual-cpp-build-tools/
 
-### 4. **Image Analyzer (`backend/app/services/classroom_image_analyzer.py`)**
-- **Purpose**: Comprehensive image understanding
-- **Models Used**:
-  - YOLO: Object detection
-  - ViT: Landmark/historical classification
-  - BLIP: Image captioning
-  - TrOCR: Text extraction
-  - VQA: Visual question answering
+**On macOS:**
+```bash
+brew install tesseract
+brew install libmagic
+```
 
-### 5. **Voice Processing (`backend/app/services/whisper_stt.py`)**
-- **Purpose**: Speech-to-text conversion
-- **Features**:
-  - Real-time audio recording
-  - Whisper model integration
-  - Audio file transcription
+**On Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+sudo apt-get install -y libmagic1
+sudo apt-get install -y ffmpeg
+```
+
+### Step 3: Frontend Setup
+
+#### 3.1 Install Node.js Dependencies
+```bash
+cd ../frontend
+npm install
+```
+
+#### 3.2 Configure Frontend
+The frontend is configured to proxy requests to `http://localhost:8000` (backend). This is already set in `package.json`.
+
+### Step 4: Environment Configuration
+
+#### 4.1 Create Environment File
+```bash
+cd ../backend
+# Create .env file (if not exists)
+cp .env.example .env  # if .env.example exists
+```
+
+#### 4.2 Configure Environment Variables
+Create or edit `.env` file in the backend directory:
+
+```env
+# Required (if using Supabase)
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_service_role_key
+
+# Optional (with defaults)
+EMBEDDING_RETENTION_DAYS=30
+DOCUMENT_RETENTION_DAYS=90
+CONTEXT_HISTORY_LIMIT=50
+MAX_QUERY_LENGTH=1000
+MAX_FILE_SIZE_MB=10
+MAX_IMAGE_DIMENSION=2048
+LLM_MODEL=mistral
+STT_MODEL=base
+EMBEDDING_MODEL=all-MiniLM-L6-v2
+BACKGROUND_TASK_TIMEOUT=300
+CLEANUP_INTERVAL_HOURS=24
+```
+
+## Database (Supabase) Setup
+
+This project uses [Supabase](https://supabase.com/) as a vector database for RAG and caching.
+
+**Required:**
+- A Supabase project (free tier is fine)
+- The following tables:
+  - `user_queries` (for storing user queries and embeddings)
+  - `documents` (for storing document chunks and embeddings)
+  - `image_embeddings` (for storing image embeddings)
+- The following RPC functions:
+  - `match_queries` (for vector similarity search on queries)
+  - `match_images` (for vector similarity search on images)
+
+**Table schemas and RPCs:**
+- See the code in `backend/app/api/fusion.py`, `backend/app/api/pdf_routes.py`, and `backend/app/services/llm_chain.py` for expected fields.
+
+### Example: user_queries Table (with pgvector)
+
+> **Note:** The `embedding` column uses the [pgvector](https://github.com/pgvector/pgvector) extension. You must enable this extension in your Supabase/Postgres instance. The vector dimension should match your embedding model (e.g., 384 for MiniLM-L6-v2).
+
+```sql
+-- Enable pgvector extension (run once per database)
+create extension if not exists vector;
+
+create table public.user_queries (
+  id uuid not null default gen_random_uuid (),
+  query text null,
+  embedding vector(384) null, -- adjust dimension if needed
+  role text null,
+  timestamp timestamp with time zone null default timezone ('utc'::text, now()),
+  constraint user_queries_pkey primary key (id)
+) TABLESPACE pg_default;
+
+create index if not exists user_queries_embedding_idx
+  on public.user_queries
+  using ivfflat (embedding vector_cosine_ops) TABLESPACE pg_default;
+```
+- Adjust the vector dimension (e.g., `vector(384)`) to match your embedding model.
+- The `ivfflat` index is required for fast vector similarity search.
+- Make sure to enable the `pgvector` extension in your database.
+
+- Example schema for `documents`:
+  - `id` (uuid, primary key)
+  - `content` (text)
+  - `embedding` (vector/float8[] or text[])
+  - `created_at` (timestamp)
+
+**You must create these tables and functions in your Supabase project.**
+
+## 🚀 Running the Application
+
+### Step 1: Start the Backend Server
+```bash
+cd backend
+# Activate virtual environment (if not already activated)
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+The backend will be available at `http://localhost:8000`
+
+### Step 2: Start the Frontend Development Server
+```bash
+cd frontend
+npm start
+```
+The frontend will be available at `http://localhost:3000`
+
+### Step 3: Access the Application
+Open your browser and navigate to `http://localhost:3000`
 
 ## 🔧 API Endpoints
 
@@ -77,8 +221,9 @@ POST /api/unified/analyze
 ### Individual Endpoints
 ```
 POST /api/ask_text          # Text-only processing
-POST /api/ask/voice         # Voice processing
-POST /api/ask/image         # Image processing
+POST /api/audio/transcribe_audio/ # Voice processing
+POST /api/image/analyze     # Image processing
+POST /api/pdf/upload_pdf/   # PDF upload and analysis
 POST /api/chat              # General chat
 POST /api/multimodal        # Combined multimodal
 ```
@@ -97,309 +242,58 @@ POST /api/maintenance/cleanup  # Trigger cleanup of old embeddings
 
 ## 🎯 Key Features
 
-### 1. **Multimodal Input Processing**
-- **Text**: Direct query processing with context awareness
-- **Voice**: Whisper STT → Text → LLM response
-- **Image**: Computer vision analysis → LLM explanation
-- **Combined**: Multiple input types in single request
+- Object detection using YOLOv8
+- Text extraction using TrOCR, LaTeX-OCR, Tesseract
+- Image captioning using BLIP
+- Visual question answering using ViLT
+- Audio transcription using Whisper
+- Retrieval-augmented generation (RAG) with Supabase
+- Subject-specific analysis (Math, Science, etc.)
+- Interactive question generation
+- Hardware optimization recommendations
+- Multimodal input: text, audio, image, PDF
+- Contextual LLM prompting and chaining
 
-### 2. **Educational Focus**
-- Subject-specific keyword mapping
-- Historical landmark recognition
-- Laboratory apparatus detection
-- Educational prompt templates
-- Context-aware responses
+## Model Information
 
-### 3. **Advanced Context Management**
-- Conversation history (configurable limit, default: 50)
-- Image context storage with timestamps
-- Voice session tracking
-- Cross-modal context awareness
-- Session persistence
-- Automatic cleanup of old entries
+The system uses the following models (auto-downloaded on first use):
+- YOLOv8n for object detection
+- TrOCR, LaTeX-OCR, Tesseract for OCR
+- BLIP for image captioning
+- ViLT for visual question answering
+- Whisper for audio transcription
+- all-MiniLM-L6-v2 for embeddings
 
-### 4. **LangChain Integration**
-- Custom prompt templates for each input type
-- Ollama LLM integration (Mistral model)
-- Chain-based processing
-- Educational response generation
+## Optimization Tips
 
-### 5. **Production-Ready Features**
-- **Background Tasks**: Non-blocking operations for embeddings and cleanup
-- **Input Sanitization**: Query normalization and length limits
-- **File Validation**: Type and size restrictions
-- **Retention Policies**: Automatic cleanup of old data
-- **Environment Validation**: Runtime configuration checks
-- **Consistent Response Models**: Pydantic models for all endpoints
+- For Intel Hardware: Install OpenVINO for acceleration
+- For Real-time Processing: Use quantized models, enable half-precision inference
+- For Memory Constraints: Use smaller models, enable lazy loading, adjust batch size
+- For Better Accuracy: Use larger YOLO models, increase confidence thresholds
 
-## 🛠️ Installation & Setup
+## Troubleshooting
 
-### Backend Setup
-```bash
-cd backend
-pip install -r requirements.txt
+- **Models fail to download:**
+  - Check internet connection
+  - Verify disk space
+  - Check model cache directory permissions
 
-# Install LangChain dependencies
-pip install langchain langchain-ollama langchain-core
+- **CUDA errors:**
+  - Verify CUDA installation
+  - Check GPU compatibility
+  - Try CPU-only mode
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your Supabase credentials
-```
+- **Memory errors:**
+  - Reduce batch size
+  - Use smaller models
+  - Enable model quantization
 
-### Frontend Setup
-```bash
-cd frontend
-npm install
-npm start
-```
+- **Supabase/database errors:**
+  - Ensure `.env` has correct `SUPABASE_URL` and `SUPABASE_KEY`
+  - Make sure required tables and RPCs exist in your Supabase project
+  - Check Supabase RLS (Row Level Security) policies allow inserts/selects for your service key
+  - See logs for specific error messages
 
-### Model Setup
-1. **YOLO Model**: Place `best.pt` in `backend/models/yolo/`
-2. **ViT Model**: Place `vit_landmark_history.pth` in `backend/models/vit/`
-3. **Whisper**: Automatically downloaded on first use
+## Contributing
 
-## ⚙️ Configuration
-
-### Environment Variables
-```env
-# Required
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
-
-# Optional (with defaults)
-EMBEDDING_RETENTION_DAYS=30
-DOCUMENT_RETENTION_DAYS=90
-CONTEXT_HISTORY_LIMIT=50
-MAX_QUERY_LENGTH=1000
-MAX_FILE_SIZE_MB=10
-MAX_IMAGE_DIMENSION=2048
-LLM_MODEL=mistral
-STT_MODEL=base
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-BACKGROUND_TASK_TIMEOUT=300
-CLEANUP_INTERVAL_HOURS=24
-```
-
-### System Configuration
-The system uses a centralized configuration system (`SystemConfig`) that manages:
-- **Retention Policies**: Automatic cleanup of old embeddings and documents
-- **Input Limits**: Query length, file size, and image dimension limits
-- **File Type Validation**: Allowed file types for uploads
-- **Model Settings**: Configurable model parameters
-- **Background Task Settings**: Timeout and cleanup intervals
-
-## 📊 Database Schema
-
-### Supabase Tables
-
-#### `documents` (for PDF processing)
-```sql
-CREATE TABLE documents (
-    id SERIAL PRIMARY KEY,
-    content TEXT,
-    embedding vector(384),
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-#### `user_queries` (for personalization)
-```sql
-CREATE TABLE user_queries (
-    id SERIAL PRIMARY KEY,
-    query TEXT,
-    embedding vector(384),
-    timestamp TIMESTAMP DEFAULT NOW()
-);
-```
-
-## 🔄 Processing Flow
-
-### 1. **Voice Input Flow**
-```
-Audio File → File Validation → Whisper STT → Text Sanitization → Context Manager → LangChain → Response
-```
-
-### 2. **Image Input Flow**
-```
-Image File → File Validation → OpenCV Preprocessing → YOLO Detection → ViT Classification → 
-BLIP Captioning → TrOCR Text Extraction → Context Manager → LangChain → Response
-```
-
-### 3. **Text Input Flow**
-```
-Text Query → Input Sanitization → Background Task (Embedding Storage) → Context Manager → LangChain → Response
-```
-
-### 4. **Multimodal Flow**
-```
-Multiple Inputs → Parallel Processing → Input Validation → Context Fusion → LangChain → Response
-```
-
-## 🛡️ Security & Validation
-
-### Input Sanitization
-- Query length limits (configurable, default: 1000 chars)
-- Whitespace normalization
-- Newline replacement
-- Multiple space removal
-
-### File Validation
-- **Image Types**: .jpg, .jpeg, .png, .webp, .gif
-- **Audio Types**: .wav, .mp3, .m4a, .webm
-- **Document Types**: .pdf, .txt, .doc, .docx
-- File size limits (configurable)
-
-### Environment Validation
-- Runtime checks for required environment variables
-- Graceful error handling for missing configuration
-
-## 🔧 Background Tasks
-
-### Automatic Cleanup
-- **Embedding Retention**: Configurable retention period (default: 30 days)
-- **Document Retention**: Separate retention for documents (default: 90 days)
-- **Context Cleanup**: Automatic cleanup of old conversation history
-
-### Non-blocking Operations
-- **Embedding Storage**: Background task for storing query embeddings
-- **Cleanup Tasks**: Scheduled cleanup of old data
-- **Logging**: Non-blocking logging operations
-
-## 🎨 Frontend Features
-
-### Modern UI Components
-- **Multimodal Input Area**: Text, voice, and image upload
-- **Real-time Processing**: Loading states and progress indicators
-- **Context Display**: Analysis summaries and input type indicators
-- **Responsive Design**: Mobile-friendly interface
-- **Educational Theme**: Learning-focused styling
-
-### Input Type Indicators
-- 🎤 Voice input with transcription display
-- 📷 Image input with object detection summary
-- 📝 Text input with context awareness
-
-## 🚀 Usage Examples
-
-### 1. **Text Query**
-```javascript
-// Frontend
-const response = await axios.post('/api/ask_text', {
-  query: "What is photosynthesis?"
-});
-```
-
-### 2. **Voice Input**
-```javascript
-// Frontend
-const formData = new FormData();
-formData.append('voice_file', audioBlob);
-const response = await axios.post('/api/ask/voice', formData);
-```
-
-### 3. **Image Analysis**
-```javascript
-// Frontend
-const formData = new FormData();
-formData.append('image_file', imageFile);
-formData.append('text_query', 'What do you see in this image?');
-const response = await axios.post('/api/ask/image', formData);
-```
-
-### 4. **Multimodal Input**
-```javascript
-// Frontend
-const formData = new FormData();
-formData.append('text_query', 'Explain this image');
-formData.append('image_file', imageFile);
-formData.append('voice_file', audioBlob);
-const response = await axios.post('/api/unified/analyze', formData);
-```
-
-## 🔍 Debugging & Monitoring
-
-### Context Summary
-```bash
-curl http://localhost:8000/api/context/summary
-```
-
-### System Configuration
-```bash
-curl http://localhost:8000/api/config
-```
-
-### Capabilities Check
-```bash
-curl http://localhost:8000/api/unified/capabilities
-```
-
-### Manual Cleanup
-```bash
-curl -X POST http://localhost:8000/api/maintenance/cleanup
-```
-
-### Logs
-- Backend logs in console with detailed processing information
-- Frontend console logs for API calls and responses
-
-## 🎯 Educational Applications
-
-### 1. **History Education**
-- Landmark recognition and historical context
-- Artifact analysis and cultural significance
-- Timeline-based learning
-
-### 2. **Science Education**
-- Laboratory apparatus identification
-- Experiment documentation
-- Scientific concept explanation
-
-### 3. **Language Learning**
-- Text extraction and translation
-- Pronunciation feedback
-- Contextual vocabulary building
-
-### 4. **General Learning**
-- Multimodal question answering
-- Interactive explanations
-- Personalized learning paths
-
-## 🔮 Future Enhancements
-
-### Planned Features
-- **Streaming Responses**: Real-time response generation
-- **Video Processing**: Video analysis capabilities
-- **Multi-language Support**: Internationalization
-- **Advanced Analytics**: Learning progress tracking
-- **Integration APIs**: LMS and educational platform integration
-
-### Technical Improvements
-- **Model Optimization**: Faster inference times
-- **Caching System**: Response caching for common queries
-- **Scalability**: Horizontal scaling support
-- **Security**: Enhanced authentication and authorization
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Implement your changes
-4. Add tests and documentation
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🆘 Support
-
-For support and questions:
-- Check the documentation
-- Review the code comments
-- Open an issue on GitHub
-- Contact the development team
-
----
-
-**Built with ❤️ for educational technology advancement** 
+Feel free to submit issues and enhancement requests! 

@@ -56,7 +56,7 @@ uploads/
 outputs/
 *.mp3
 *.wav
-*.pdf
+
 
 # Supabase secrets (if any)
 .supabase/
