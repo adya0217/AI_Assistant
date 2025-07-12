@@ -8,7 +8,17 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from sentence_transformers import SentenceTransformer
+from app.config.openvino_config import OpenVINOConfig
+from transformers import AutoTokenizer
+try:
+    from optimum.intel.openvino import OVModelForFeatureExtraction
+    openvino_available = True
+except ImportError:
+    openvino_available = False
 
+# Initialize logger at the top
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 load_dotenv()
 
@@ -23,14 +33,36 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+if OpenVINOConfig.should_use_openvino() and openvino_available:
+    try:
+        openvino_cache_path = OpenVINOConfig.get_model_cache_path("all-MiniLM-L6-v2")
+        if os.path.exists(openvino_cache_path) and not OpenVINOConfig.should_export_models():
+            logger.info(f"Loading OpenVINO optimized embedding model from cache: {openvino_cache_path}")
+            embedding_model = OVModelForFeatureExtraction.from_pretrained(openvino_cache_path)
+            tokenizer = AutoTokenizer.from_pretrained(openvino_cache_path)
+        else:
+            logger.info("Exporting embedding model to OpenVINO format...")
+            os.makedirs(openvino_cache_path, exist_ok=True)
+            embedding_model = OVModelForFeatureExtraction.from_pretrained("all-MiniLM-L6-v2", export=True)
+            embedding_model.save_pretrained(openvino_cache_path)
+            tokenizer = AutoTokenizer.from_pretrained("all-MiniLM-L6-v2")
+            tokenizer.save_pretrained(openvino_cache_path)
+            logger.info(f"OpenVINO embedding model saved to: {openvino_cache_path}")
+        logger.info("OpenVINO optimized embedding model loaded successfully")
+        def get_embedding(text):
+            encoded = tokenizer(text, return_tensors="np", padding="max_length", truncation=True, max_length=128)
+            embedding = embedding_model(**encoded).squeeze(0)
+            return embedding[0].tolist() if hasattr(embedding, 'tolist') else embedding.tolist()
+    except Exception as e:
+        logger.warning(f"OpenVINO embedding model not available or failed: {e}\nFalling back to SentenceTransformer.")
+        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        def get_embedding(text):
+            return embedding_model.encode(text).tolist()
+else:
+    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    def get_embedding(text):
+        return embedding_model.encode(text).tolist()
 
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-def get_embedding(text: str):
-    return embedding_model.encode(text).tolist()
 
 def extract_text_from_pdf(file_path: str) -> str:
     text = ""

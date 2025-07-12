@@ -16,6 +16,9 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled = false }) => {
     const audioChunks = useRef<Blob[]>([]);
     const streamRef = useRef<MediaStream | null>(null);
 
+    const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+    const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if ((message.trim() || image || audio) && !disabled) {
@@ -35,9 +38,21 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled = false }) => {
             if (file.type.startsWith('image/')) {
                 setImage(file);
                 setAudio(null);
+                if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+                setImagePreviewUrl(URL.createObjectURL(file));
+                if (audioPreviewUrl) {
+                    URL.revokeObjectURL(audioPreviewUrl);
+                    setAudioPreviewUrl(null);
+                }
             } else if (file.type.startsWith('audio/')) {
                 setAudio(file);
                 setImage(null);
+                if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl);
+                setAudioPreviewUrl(URL.createObjectURL(file));
+                if (imagePreviewUrl) {
+                    URL.revokeObjectURL(imagePreviewUrl);
+                    setImagePreviewUrl(null);
+                }
             } else {
                 alert('Unsupported file type. Please select an image or audio file.');
             }
@@ -80,13 +95,20 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled = false }) => {
         setRecording(false);
     };
 
+    React.useEffect(() => {
+        return () => {
+            if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+            if (audioPreviewUrl) URL.revokeObjectURL(audioPreviewUrl);
+        };
+    }, []);
+
     return (
         <form onSubmit={handleSubmit} className="input-area" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
                 type="text"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder="Type your message..."
+                placeholder={image ? "Add a message about this image..." : "Type your message..."}
                 className="message-input"
                 disabled={disabled || recording}
                 style={{ flex: 1 }}
@@ -121,29 +143,37 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, disabled = false }) => {
                 {recording ? '⏹️' : '🎤'}
             </button>
 
-            {image && (
-                <div style={{ position: 'relative', display: 'inline-block' }}>
+            {image && imagePreviewUrl && (
+                <div style={{ position: 'relative', display: 'inline-block', marginLeft: 8 }}>
                     <img
-                        src={URL.createObjectURL(image)}
+                        src={imagePreviewUrl}
                         alt="preview"
-                        style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4, border: '1px solid #ccc' }}
+                        style={{ width: 120, height: 120, objectFit: 'cover', borderRadius: 8, border: '1px solid #ccc', marginBottom: 4 }}
                     />
                     <button
                         type="button"
-                        onClick={() => setImage(null)}
-                        style={{ position: 'absolute', top: -8, right: -8, background: '#fff', border: '1px solid #ccc', borderRadius: '50%', width: 20, height: 20, fontSize: 12, cursor: 'pointer' }}
+                        onClick={() => { setImage(null); if (imagePreviewUrl) { URL.revokeObjectURL(imagePreviewUrl); setImagePreviewUrl(null); } }}
+                        style={{ position: 'absolute', top: 2, right: 2, background: '#fff', border: '1px solid #ccc', borderRadius: '50%', width: 24, height: 24, fontSize: 16, cursor: 'pointer' }}
                         title="Remove image"
                     >
                         ×
                     </button>
+                    <textarea
+                        value={message}
+                        onChange={e => setMessage(e.target.value)}
+                        placeholder="Add a message about this image..."
+                        style={{ width: 120, marginTop: 4, borderRadius: 4, border: '1px solid #ccc', resize: 'none', fontSize: 14 }}
+                        rows={2}
+                        disabled={disabled}
+                    />
                 </div>
             )}
-            {audio && (
+            {audio && audioPreviewUrl && (
                 <div style={{ display: 'inline-block', marginLeft: 8 }}>
-                    <audio controls src={URL.createObjectURL(audio)} style={{ height: 40 }} />
+                    <audio controls src={audioPreviewUrl} style={{ height: 40 }} />
                     <button
                         type="button"
-                        onClick={() => setAudio(null)}
+                        onClick={() => { setAudio(null); if (audioPreviewUrl) { URL.revokeObjectURL(audioPreviewUrl); setAudioPreviewUrl(null); } }}
                         style={{ marginLeft: 4, fontSize: 14, cursor: 'pointer' }}
                         title="Remove audio"
                     >

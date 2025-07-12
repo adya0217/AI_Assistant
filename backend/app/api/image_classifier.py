@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 try:
     
-    yolo_model = YOLO('backend/models/yolo/best.pt')
+    yolo_model = YOLO('backend/models/yolo/yolo.pt')
     print("YOLO model loaded successfully")
     
     

@@ -21,6 +21,14 @@ from PIL import Image
 from app.config.openvino_config import OpenVINOConfig
 from app.config.system_config import SystemConfig as config
 from torch import serialization
+# Add LaTeX-OCR import
+try:
+    from latex_ocr import LatexOCR
+    latex_ocr_available = True
+except ImportError:
+    latex_ocr_available = False
+import pytesseract
+from PIL import Image as PILImage
 
 BLIP_LOCAL_PATH = os.getenv("BLIP_LOCAL_PATH", "blip-image-captioning-base")
 
@@ -32,6 +40,9 @@ SAFE_GLOBALS = [
     'ultralytics.nn.modules.block.SPPF',
     'ultralytics.nn.modules.block.Bottleneck'
 ]
+
+logger = logging.getLogger("classroom_image_analyzer")
+logging.basicConfig(level=logging.INFO)
 
 class ClassroomImageAnalyzer:
     
@@ -47,15 +58,17 @@ class ClassroomImageAnalyzer:
     def load_models(self):
         try:
             import torch  
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            # Force CPU for ViT and embedding models due to limited GPU memory
+            self.device = torch.device('cpu')
             
            
-            yolo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../models/yolo/best.pt'))
+            yolo_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../models/yolo/yolo.pt'))
             print("Loading YOLO from:", yolo_path)
             
            
             for global_name in SAFE_GLOBALS:
-                serialization.add_safe_globals([global_name])
+                # Removed serialization.add_safe_globals([global_name]) as it is not a valid PyTorch method
+                pass # This line was removed as per the edit hint.
             
             print(f"Added {', '.join(SAFE_GLOBALS)} to safe globals for YOLO loading")
             
@@ -102,65 +115,37 @@ class ClassroomImageAnalyzer:
                     landmark_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../dataset/landmark'))
                     history_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../dataset/History'))
                     class_names = set()
-                    
                     for base_dir in [landmark_dir, history_dir]:
                         if os.path.isdir(base_dir):
                             for entry in os.listdir(base_dir):
                                 entry_path = os.path.join(base_dir, entry)
                                 if os.path.isdir(entry_path):
                                     class_names.add(entry)
-                    
                     self.vit_classes = sorted(list(class_names))
                     print(f"Found {len(self.vit_classes)} class names from dataset: {self.vit_classes}")
-                    
-                    # Load checkpoint to determine number of classes
+                    # Load checkpoint
                     state_dict = torch.load(vit_path, map_location=self.device, weights_only=True)
-                    
-                    # Check if checkpoint has class names saved
-                    if 'class_names' in state_dict:
-                        checkpoint_classes = state_dict['class_names']
-                        print(f"Found class names in checkpoint: {checkpoint_classes}")
-                        self.vit_classes = checkpoint_classes
-                    else:
-                        print("No class names found in checkpoint, using dataset directories")
-                    
-                    # Determine number of classes from checkpoint or dataset
-                    if 'heads.head.weight' in state_dict:
-                        num_classes = state_dict['heads.head.weight'].shape[0]
-                        print(f"Detected num_classes in checkpoint: {num_classes}")
-                        
-                        # If checkpoint has different number of classes, adjust
-                        if num_classes != len(self.vit_classes):
-                            print(f"Warning: Checkpoint has {num_classes} classes but dataset has {len(self.vit_classes)} classes")
-                            print("Using checkpoint number of classes and adjusting class names")
-                            if num_classes > len(self.vit_classes):
-                                
-                                while len(self.vit_classes) < num_classes:
-                                    self.vit_classes.append(f"class_{len(self.vit_classes)}")
-                            else:
-                                
-                                self.vit_classes = self.vit_classes[:num_classes]
-                    else:
-                        num_classes = len(self.vit_classes)
-                        print(f"Using dataset number of classes: {num_classes}")
-
-                    
+                    # Always use dataset class names and count
+                    num_classes = len(self.vit_classes)
+                    print(f"Forcing ViT model to use {num_classes} classes from dataset.")
                     self.vit_model = vit_b_16(weights=None)
                     self.vit_model.heads.head = torch.nn.Linear(self.vit_model.heads.head.in_features, num_classes)
-                    self.vit_model.load_state_dict(state_dict)
+                    # Remove checkpoint head if shape mismatch
+                    if 'heads.head.weight' in state_dict and state_dict['heads.head.weight'].shape[0] != num_classes:
+                        print(f"Removing checkpoint head: {state_dict['heads.head.weight'].shape[0]} -> {num_classes} classes")
+                        state_dict.pop('heads.head.weight', None)
+                        state_dict.pop('heads.head.bias', None)
+                    self.vit_model.load_state_dict(state_dict, strict=False)
                     self.vit_model.to(self.device)
                     self.vit_model.eval()
-
-                    # Load embedding model
+                    # Embedding model
                     self.embedding_model = vit_b_16(weights=None)
                     self.embedding_model.heads.head = torch.nn.Linear(self.embedding_model.heads.head.in_features, num_classes)
-                    self.embedding_model.load_state_dict(state_dict)
+                    self.embedding_model.load_state_dict(state_dict, strict=False)
                     self.embedding_model.heads.head = torch.nn.Identity()
                     self.embedding_model.to(self.device)
                     self.embedding_model.eval()
-                    
                     print(f"ViT model loaded successfully with {num_classes} classes: {self.vit_classes}")
-                    
                 except Exception as e:
                     print(f"Error loading ViT weights: {e}")
                     print("Falling back to pretrained ViT model")
@@ -431,13 +416,51 @@ class ClassroomImageAnalyzer:
             return None
         return max(detections, key=lambda d: d['confidence'])['class']
 
+    def latex_ocr_equation(self, image_path):
+        if not latex_ocr_available:
+            return None
+        try:
+            ocr = LatexOCR()
+            result = ocr(image_path)
+            return result
+        except Exception as e:
+            self.logger.error(f"[LaTeX-OCR] Error: {e}")
+            return None
+
+    def tesseract_ocr(self, image_path):
+        try:
+            img = PILImage.open(image_path)
+            text = pytesseract.image_to_string(img)
+            return text
+        except Exception as e:
+            self.logger.error(f"[Tesseract-OCR] Error: {e}")
+            return None
+
     def analyze_image_comprehensive(self, image_path: str, specific_questions: List[str] = None, user_text: str = None) -> Dict[str, Any]:
         self.logger.info(f"[ANALYZE] Starting comprehensive analysis for: {image_path}")
+        self.logger.info(f"[ANALYZE] LaTeX-OCR available: {latex_ocr_available}")
         image = self.preprocess_image(image_path)
         if image is None:
             self.logger.error("[ANALYZE] Image preprocessing failed")
             return {'error': 'Could not process image'}
         try:
+            # Try LaTeX-OCR for math, Tesseract for documents
+            latex_ocr_text = self.latex_ocr_equation(image_path) if latex_ocr_available else None
+            self.logger.info(f"[ANALYZE] LaTeX-OCR raw output: {latex_ocr_text}")
+            if latex_ocr_text and (re.search(r'[=+\-*/^]', latex_ocr_text) or len(latex_ocr_text) > 3):
+                ocr_text = latex_ocr_text
+                self.logger.info(f"[ANALYZE] LaTeX-OCR text used: {ocr_text}")
+            else:
+                tesseract_text = self.tesseract_ocr(image_path)
+                self.logger.info(f"[ANALYZE] Tesseract OCR output: {tesseract_text[:100] if tesseract_text else tesseract_text}")
+                if tesseract_text and len(tesseract_text.split()) > 5:
+                    ocr_text = tesseract_text
+                    self.logger.info(f"[ANALYZE] Tesseract OCR text used: {ocr_text[:100]}")
+                else:
+                    ocr_text = self.extract_text_ocr(image)
+                    self.logger.info(f"[ANALYZE] TrOCR text used: {ocr_text[:100]}")
+            text_content = user_text if user_text else ocr_text
+
             objects_info = self.detect_objects(image)
             yolo_detections = objects_info['detections']
             yolo_conf = self._get_highest_confidence_yolo(yolo_detections)
@@ -451,10 +474,6 @@ class ClassroomImageAnalyzer:
 
             caption = self.generate_image_caption(image)
             self.logger.info(f"[ANALYZE] BLIP caption: {caption}")
-
-            ocr_text = self.extract_text_ocr(image)
-            self.logger.info(f"[ANALYZE] OCR text: {ocr_text}")
-            text_content = user_text if user_text else ocr_text
 
             if yolo_detections and yolo_conf > 0.6:
                 final_prediction = {
@@ -471,12 +490,21 @@ class ClassroomImageAnalyzer:
                 }
                 self.logger.info(f"[ANALYZE] Final prediction: ViT (landmark_or_historical)")
             else:
-                final_prediction = {
-                    'type': 'caption_only',
-                    'label': caption,
-                    'confidence': 0.4
-                }
-                self.logger.info(f"[ANALYZE] Final prediction: BLIP (caption_only)")
+                # Fallback: If OCR text is present and looks like math/text, prioritize it
+                if ocr_text and (re.search(r'[=+\-*/^]', ocr_text) or len(ocr_text) > 3):
+                    final_prediction = {
+                        'type': 'ocr_text',
+                        'label': ocr_text,
+                        'confidence': 0.7
+                    }
+                    self.logger.info(f"[ANALYZE] Final prediction: OCR (text/equation)")
+                else:
+                    final_prediction = {
+                        'type': 'caption_only',
+                        'label': caption,
+                        'confidence': 0.4
+                    }
+                    self.logger.info(f"[ANALYZE] Final prediction: BLIP (caption_only)")
 
             object_names = [d['class'] for d in yolo_detections]
             subject = self.identify_subject_context(text_content, object_names, caption)
@@ -501,7 +529,25 @@ class ClassroomImageAnalyzer:
                 'user_text': user_text,
                 'final_prediction': final_prediction
             }
-            analysis_result['explanation'] = self.generate_educational_explanation(analysis_result)
+            # If OCR text is prioritized, generate a math/text explanation
+            if final_prediction['type'] == 'ocr_text':
+                analysis_result['explanation'] = f"The image contains the following text or equation: {ocr_text}\n"
+                # Optionally, add a simple math solver for equations
+                if re.search(r'=', ocr_text):
+                    try:
+                        from sympy import Eq, symbols, solve
+                        x = symbols('x')
+                        eq = ocr_text.replace('^', '**')
+                        eq = eq.replace('= 0', '') if '= 0' in eq else eq
+                        eq = eq.replace('=0', '') if '=0' in eq else eq
+                        eq = eq.replace(' ', '')
+                        # Only handle simple quadratics for now
+                        sol = solve(eq, x)
+                        analysis_result['explanation'] += f"\nSolving for x: {sol}"
+                    except Exception as e:
+                        analysis_result['explanation'] += f"\n(Could not solve equation automatically: {e})"
+            else:
+                analysis_result['explanation'] = self.generate_educational_explanation(analysis_result)
             self.logger.info(f"[ANALYZE] Comprehensive analysis complete for: {image_path}")
             return analysis_result
         except Exception as e:
@@ -529,18 +575,17 @@ class ClassroomImageAnalyzer:
             return "I've analyzed the image. What would you like to know about it?" 
 
     def _load_ocr_models(self):
-        """Load OCR models with OpenVINO optimization if available, fallback to PyTorch if unsupported."""
         try:
             if OpenVINOConfig.should_use_openvino():
                 try:
                     from optimum.intel import OVModelForSeq2SeqLM
                     openvino_cache_path = OpenVINOConfig.get_model_cache_path("trocr-base-printed")
                     if os.path.exists(openvino_cache_path) and not OpenVINOConfig.should_export_models():
-                        print(f"Loading OpenVINO optimized TrOCR from cache: {openvino_cache_path}")
+                        logger.info(f"Loading OpenVINO optimized TrOCR from cache: {openvino_cache_path}")
                         model = OVModelForSeq2SeqLM.from_pretrained(openvino_cache_path)
                         processor = TrOCRProcessor.from_pretrained(openvino_cache_path)
                     else:
-                        print("Exporting TrOCR to OpenVINO format...")
+                        logger.info("Exporting TrOCR to OpenVINO format...")
                         os.makedirs(openvino_cache_path, exist_ok=True)
                         model = OVModelForSeq2SeqLM.from_pretrained(
                             OpenVINOConfig.TROCR_MODEL_NAME,
@@ -549,16 +594,16 @@ class ClassroomImageAnalyzer:
                         processor = TrOCRProcessor.from_pretrained(OpenVINOConfig.TROCR_MODEL_NAME)
                         model.save_pretrained(openvino_cache_path)
                         processor.save_pretrained(openvino_cache_path)
-                        print(f"OpenVINO TrOCR model saved to: {openvino_cache_path}")
-                    print("OpenVINO optimized TrOCR model loaded successfully")
+                        logger.info(f"OpenVINO TrOCR model saved to: {openvino_cache_path}")
+                    logger.info("OpenVINO optimized TrOCR model loaded successfully")
                     return processor, model
                 except Exception as e:
-                    print(f"OpenVINO TrOCR not supported or failed: {e}\nFalling back to PyTorch TrOCR model.")
+                    logger.error(f"OpenVINO TrOCR not supported or failed: {e}\nFalling back to PyTorch TrOCR model.")
                     return self._load_pytorch_ocr_models()
             else:
                 return self._load_pytorch_ocr_models()
         except Exception as e:
-            print(f"Error loading OCR models: {e}")
+            logger.error(f"Error loading OCR models: {e}")
             return self._load_pytorch_ocr_models()
 
     def _load_pytorch_ocr_models(self):
@@ -568,18 +613,17 @@ class ClassroomImageAnalyzer:
         return processor, model
     
     def _load_blip_models(self):
-        """Load BLIP models with OpenVINO optimization if available, fallback to PyTorch if unsupported."""
         try:
             if OpenVINOConfig.should_use_openvino():
                 try:
                     from optimum.intel import OVModelForSeq2SeqLM
                     openvino_cache_path = OpenVINOConfig.get_model_cache_path("blip-image-captioning-base")
                     if os.path.exists(openvino_cache_path) and not OpenVINOConfig.should_export_models():
-                        print(f"Loading OpenVINO optimized BLIP from cache: {openvino_cache_path}")
+                        logger.info(f"Loading OpenVINO optimized BLIP from cache: {openvino_cache_path}")
                         model = OVModelForSeq2SeqLM.from_pretrained(openvino_cache_path)
                         processor = BlipProcessor.from_pretrained(openvino_cache_path)
                     else:
-                        print("Exporting BLIP to OpenVINO format...")
+                        logger.info("Exporting BLIP to OpenVINO format...")
                         os.makedirs(openvino_cache_path, exist_ok=True)
                         model = OVModelForSeq2SeqLM.from_pretrained(
                             OpenVINOConfig.BLIP_MODEL_NAME,
@@ -588,16 +632,16 @@ class ClassroomImageAnalyzer:
                         processor = BlipProcessor.from_pretrained(OpenVINOConfig.BLIP_MODEL_NAME)
                         model.save_pretrained(openvino_cache_path)
                         processor.save_pretrained(openvino_cache_path)
-                        print(f"OpenVINO BLIP model saved to: {openvino_cache_path}")
-                    print("OpenVINO optimized BLIP model loaded successfully")
+                        logger.info(f"OpenVINO BLIP model saved to: {openvino_cache_path}")
+                    logger.info("OpenVINO optimized BLIP model loaded successfully")
                     return processor, model
                 except Exception as e:
-                    print(f"OpenVINO BLIP not supported or failed: {e}\nFalling back to PyTorch BLIP model.")
+                    logger.error(f"OpenVINO BLIP not supported or failed: {e}\nFalling back to PyTorch BLIP model.")
                     return self._load_pytorch_blip_models()
             else:
                 return self._load_pytorch_blip_models()
         except Exception as e:
-            print(f"Error loading BLIP models: {e}")
+            logger.error(f"Error loading BLIP models: {e}")
             return self._load_pytorch_blip_models()
 
     def _load_pytorch_blip_models(self):

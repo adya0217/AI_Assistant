@@ -18,14 +18,6 @@ import torch.nn.modules.conv
 import torch.nn.modules.batchnorm
 import torch.nn.modules.container
 
-# Add basic safe globals for PyTorch 2.6+ compatibility
-torch.serialization.add_safe_globals([
-    torch.nn.modules.conv.Conv2d,
-    torch.nn.modules.batchnorm.BatchNorm2d,
-    torch.nn.modules.container.Sequential,
-    torch.nn.modules.container.ModuleList
-])
-
 import logging
 import huggingface_hub
 

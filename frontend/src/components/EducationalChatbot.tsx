@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useRef } from "react"
-import { Send, Mic, BookOpen, Brain, Lightbulb, Star, Sparkles, Image as ImageIcon } from "lucide-react"
+import { Send, Mic, BookOpen, Brain, Lightbulb, Star, Sparkles, Image as ImageIcon, X, Edit3, Play, Pause } from "lucide-react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Card } from "./ui/card"
@@ -15,6 +15,13 @@ interface Message {
     audio?: string; // data URL
     isBot: boolean;
     timestamp: Date;
+}
+
+// Preview state for pending uploads
+interface PreviewState {
+    type: 'image' | 'audio';
+    data: string;
+    text?: string; // For image captions
 }
 
 export default function EducationalChatbot() {
@@ -32,11 +39,12 @@ export default function EducationalChatbot() {
     const [audioChunks, setAudioChunks] = useState<Blob[]>([])
     const fileInputRef = useRef<HTMLInputElement>(null)
     const streamRef = useRef<MediaStream | null>(null)
-    const [pending, setPending] = useState<{ image?: string; audio?: string } | null>(null)
+    const [preview, setPreview] = useState<PreviewState | null>(null)
     const [botLoading, setBotLoading] = useState(false)
+    const audioRef = useRef<HTMLAudioElement>(null)
 
     const handleSend = async () => {
-        if (botLoading || pending) return;
+        if (botLoading || preview) return;
         if (message.trim()) {
             const newMessage: Message = {
                 id: messages.length + 1,
@@ -109,7 +117,7 @@ export default function EducationalChatbot() {
     }
 
     const handleFileUpload = () => {
-        if (botLoading || pending) return;
+        if (botLoading || preview) return;
         fileInputRef.current?.click()
         console.log('[UI] Image upload button clicked')
     }
@@ -119,20 +127,11 @@ export default function EducationalChatbot() {
         if (!file) return
         const reader = new FileReader()
         reader.onload = () => {
-            setPending({ image: reader.result as string })
-            setTimeout(async () => {
-                setMessages((prev) => [
-                    ...prev,
-                    {
-                        id: prev.length + 1,
-                        image: reader.result as string,
-                        isBot: false,
-                        timestamp: new Date(),
-                    },
-                ])
-                setPending(null)
-                await handleBotResponse({ image: reader.result as string })
-            }, 1200)
+            setPreview({
+                type: 'image',
+                data: reader.result as string,
+                text: '' // Initialize empty text for image caption
+            })
         }
         reader.readAsDataURL(file)
         e.target.value = "" // reset input
@@ -142,8 +141,25 @@ export default function EducationalChatbot() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
             streamRef.current = stream
+
+            // Try different audio formats for better compatibility
+            let mimeType = 'audio/webm;codecs=opus'
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                mimeType = 'audio/webm'
+            }
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                mimeType = 'audio/mp4'
+            }
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                mimeType = 'audio/wav'
+            }
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                // Fallback to default format
+                mimeType = ''
+            }
+
             const recorder = new window.MediaRecorder(stream, {
-                mimeType: 'audio/webm;codecs=opus'
+                mimeType: mimeType
             })
             setMediaRecorder(recorder)
             setAudioChunks([])
@@ -151,23 +167,17 @@ export default function EducationalChatbot() {
                 if (e.data.size > 0) setAudioChunks((prev) => [...prev, e.data])
             }
             recorder.onstop = () => {
-                const blob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' })
+                const blob = new Blob(audioChunks, { type: mimeType })
+                if (blob.size === 0) {
+                    alert('Recording failed: no audio data captured. Please try again.');
+                    return;
+                }
                 const reader = new FileReader()
                 reader.onload = () => {
-                    setPending({ audio: reader.result as string })
-                    setTimeout(async () => {
-                        setMessages((prev) => [
-                            ...prev,
-                            {
-                                id: prev.length + 1,
-                                audio: reader.result as string,
-                                isBot: false,
-                                timestamp: new Date(),
-                            },
-                        ])
-                        setPending(null)
-                        await handleBotResponse({ audio: reader.result as string })
-                    }, 1200)
+                    setPreview({
+                        type: 'audio',
+                        data: reader.result as string
+                    })
                 }
                 reader.readAsDataURL(blob)
                 if (streamRef.current) {
@@ -177,7 +187,7 @@ export default function EducationalChatbot() {
             }
             recorder.start()
             setIsRecording(true)
-            console.log('[UI] Audio recording started')
+            console.log('[UI] Audio recording started with format:', mimeType)
         } catch (err) {
             alert('Could not start audio recording. Please check your microphone permissions.')
             setIsRecording(false)
@@ -194,13 +204,56 @@ export default function EducationalChatbot() {
     }
 
     const handleMicClick = () => {
-        if (botLoading || pending) return;
+        if (botLoading || preview) return;
         if (isRecording) {
             stopRecording()
         } else {
             startRecording()
         }
     }
+
+    const handleSendPreview = async () => {
+        if (!preview) return;
+
+        // Convert blob URL to data URL for sending
+        let dataToSend = preview.data;
+        if (preview.type === 'audio' && preview.data.startsWith('blob:')) {
+            try {
+                const response = await fetch(preview.data);
+                const blob = await response.blob();
+                const reader = new FileReader();
+                dataToSend = await new Promise((resolve) => {
+                    reader.onload = () => resolve(reader.result as string);
+                    reader.readAsDataURL(blob);
+                });
+            } catch (error) {
+                console.error('Error converting blob URL to data URL:', error);
+            }
+        }
+
+        const newMessage: Message = {
+            id: messages.length + 1,
+            [preview.type]: dataToSend,
+            text: preview.text, // Include caption text for images
+            isBot: false,
+            timestamp: new Date(),
+        }
+        setMessages([...messages, newMessage])
+        setPreview(null)
+        await handleBotResponse({ [preview.type]: dataToSend })
+    }
+
+    const handleCancelPreview = () => {
+        setPreview(null)
+        if (audioRef.current) {
+            audioRef.current.pause()
+            audioRef.current.currentTime = 0
+        }
+    }
+
+
+
+
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-800 relative overflow-hidden">
@@ -277,25 +330,89 @@ export default function EducationalChatbot() {
                                         </div>
                                     </div>
                                 ))}
-                                {/* Pending preview bubble */}
-                                {pending && (
+
+                                {/* Preview Area */}
+                                {preview && (
                                     <div className="flex justify-end">
-                                        <div className="break-words whitespace-pre-line w-fit max-w-2xl p-4 rounded-2xl shadow-lg bg-gradient-to-r from-emerald-600/90 to-teal-600/90 text-white border border-emerald-400/30 shadow-emerald-500/20 opacity-80 relative">
-                                            {pending.image && (
-                                                <div className="flex flex-col items-center">
-                                                    <img src={pending.image} alt="preview" className="mb-2 max-w-xs max-h-60 rounded-lg border border-slate-700" />
-                                                    <span className="text-xs text-slate-200 animate-pulse">Uploading...</span>
+                                        <div className="break-words whitespace-pre-line w-fit max-w-2xl p-4 rounded-2xl shadow-lg bg-gradient-to-r from-emerald-600/90 to-teal-600/90 text-white border border-emerald-400/30 shadow-emerald-500/20 relative">
+                                            {/* Preview Header */}
+                                            <div className="flex items-center justify-between mb-3 pb-2 border-b border-emerald-400/30">
+                                                <span className="text-sm font-medium text-emerald-200">
+                                                    {preview.type === 'image' ? '📷 Image Preview' : '🎤 Audio Preview'}
+                                                </span>
+                                                <Button
+                                                    onClick={handleCancelPreview}
+                                                    className="p-1 h-6 w-6 rounded-full bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200"
+                                                    size="sm"
+                                                >
+                                                    <X size={12} />
+                                                </Button>
+                                            </div>
+
+                                            {/* Preview Content */}
+                                            {preview.type === 'image' && (
+                                                <div className="space-y-3">
+                                                    <img
+                                                        src={preview.data}
+                                                        alt="preview"
+                                                        className="max-w-xs max-h-60 rounded-lg border border-slate-700"
+                                                    />
+                                                    <div className="space-y-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <Edit3 size={14} className="text-emerald-300" />
+                                                            <span className="text-xs text-emerald-200">Add caption (optional):</span>
+                                                        </div>
+                                                        <Input
+                                                            value={preview.text || ''}
+                                                            onChange={(e) => setPreview({ ...preview, text: e.target.value })}
+                                                            placeholder="Describe what you see in this image..."
+                                                            className="text-xs bg-slate-800/60 border-emerald-400/30 text-white placeholder:text-slate-400"
+                                                        />
+                                                    </div>
                                                 </div>
                                             )}
-                                            {pending.audio && (
-                                                <div className="flex flex-col items-center">
-                                                    <audio controls src={pending.audio} className="mb-2 w-full opacity-60" />
-                                                    <span className="text-xs text-slate-200 animate-pulse">Uploading...</span>
+
+                                            {preview.type === 'audio' && (
+                                                <div className="space-y-3">
+                                                    <div className="text-sm text-emerald-200 mb-2">Audio Recording Preview</div>
+                                                    <audio
+                                                        ref={audioRef}
+                                                        controls
+                                                        className="w-full"
+                                                        onLoadedMetadata={() => console.log('Audio metadata loaded')}
+                                                        onCanPlay={() => console.log('Audio can play')}
+                                                        onError={(e) => console.error('Audio error:', e)}
+                                                    >
+                                                        <source src={preview.data} type="audio/webm" />
+                                                        <source src={preview.data} type="audio/webm;codecs=opus" />
+                                                        Your browser does not support the audio element.
+                                                    </audio>
                                                 </div>
                                             )}
+
+                                            {/* Preview Actions */}
+                                            <div className="flex gap-2 mt-3 pt-3 border-t border-emerald-400/30">
+                                                <Button
+                                                    onClick={handleCancelPreview}
+                                                    className="flex-1 bg-slate-700/60 hover:bg-slate-600/60 text-slate-300 hover:text-slate-200"
+                                                    size="sm"
+                                                >
+                                                    Cancel
+                                                </Button>
+                                                <Button
+                                                    onClick={handleSendPreview}
+                                                    className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white"
+                                                    size="sm"
+                                                    disabled={botLoading}
+                                                >
+                                                    <Send size={14} className="mr-1" />
+                                                    Send
+                                                </Button>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
+
                                 {/* Bot loading bubble */}
                                 {botLoading && (
                                     <div className="flex justify-start">
@@ -316,7 +433,7 @@ export default function EducationalChatbot() {
                                             onKeyPress={handleKeyPress}
                                             placeholder="Ask me anything about your studies..."
                                             className="pr-12 py-3 text-base rounded-full border-2 border-slate-600/50 focus:border-cyan-400/60 bg-slate-800/80 text-white placeholder:text-slate-400 shadow-inner w-full"
-                                            disabled={botLoading || !!pending}
+                                            disabled={botLoading || !!preview}
                                         />
                                     </div>
 
@@ -329,7 +446,7 @@ export default function EducationalChatbot() {
                                             variant="outline"
                                             size="icon"
                                             title="Upload Image"
-                                            disabled={botLoading || !!pending}
+                                            disabled={botLoading || !!preview}
                                         >
                                             <ImageIcon size={18} />
                                         </Button>
@@ -343,7 +460,7 @@ export default function EducationalChatbot() {
                                             variant="outline"
                                             size="icon"
                                             title={isRecording ? "Stop Recording" : "Record Audio"}
-                                            disabled={botLoading || !!pending}
+                                            disabled={botLoading || !!preview}
                                         >
                                             <Mic size={18} />
                                         </Button>
@@ -351,7 +468,7 @@ export default function EducationalChatbot() {
                                             onClick={handleSend}
                                             className="rounded-full bg-gradient-to-r from-cyan-600 via-violet-600 to-emerald-600 hover:from-cyan-700 hover:via-violet-700 hover:to-emerald-700 text-white shadow-lg px-6 border border-cyan-400/30 shadow-cyan-500/25 p-2"
                                             type="button"
-                                            disabled={botLoading || !!pending}
+                                            disabled={botLoading || !!preview}
                                         >
                                             <Send size={18} />
                                         </Button>
@@ -362,33 +479,33 @@ export default function EducationalChatbot() {
                                 <div className="flex flex-wrap gap-2 mt-4">
                                     <Button
                                         className="rounded-full bg-slate-700/60 border border-cyan-500/30 hover:bg-cyan-600/20 text-cyan-300 hover:text-cyan-200 hover:border-cyan-400 shadow-sm hover:shadow-cyan-500/25 px-3 py-1 text-sm"
-                                        onClick={() => { if (!(botLoading || !!pending)) setMessage("Explain this concept to me") }}
+                                        onClick={() => { if (!(botLoading || !!preview)) setMessage("Explain this concept to me") }}
                                         type="button"
                                         variant="outline"
                                         size="sm"
-                                        disabled={botLoading || !!pending}
+                                        disabled={botLoading || !!preview}
                                     >
                                         <Lightbulb size={14} className="mr-1 inline" />
                                         Explain Concept
                                     </Button>
                                     <Button
                                         className="rounded-full bg-slate-700/60 border border-violet-500/30 hover:bg-violet-600/20 text-violet-300 hover:text-violet-200 hover:border-violet-400 shadow-sm hover:shadow-violet-500/25 px-3 py-1 text-sm"
-                                        onClick={() => { if (!(botLoading || !!pending)) setMessage("Give me practice questions") }}
+                                        onClick={() => { if (!(botLoading || !!preview)) setMessage("Give me practice questions") }}
                                         type="button"
                                         variant="outline"
                                         size="sm"
-                                        disabled={botLoading || !!pending}
+                                        disabled={botLoading || !!preview}
                                     >
                                         <Brain size={14} className="mr-1 inline" />
                                         Practice Quiz
                                     </Button>
                                     <Button
                                         className="rounded-full bg-slate-700/60 border border-emerald-500/30 hover:bg-emerald-600/20 text-emerald-300 hover:text-emerald-200 hover:border-emerald-400 shadow-sm hover:shadow-emerald-500/25 px-3 py-1 text-sm"
-                                        onClick={() => { if (!(botLoading || !!pending)) setMessage("Create a study plan") }}
+                                        onClick={() => { if (!(botLoading || !!preview)) setMessage("Create a study plan") }}
                                         type="button"
                                         variant="outline"
                                         size="sm"
-                                        disabled={botLoading || !!pending}
+                                        disabled={botLoading || !!preview}
                                     >
                                         <BookOpen size={14} className="mr-1 inline" />
                                         Study Plan

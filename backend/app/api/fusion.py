@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 load_dotenv()
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
 from pydantic import BaseModel
 import logging
 from datetime import datetime, timedelta
@@ -10,7 +10,7 @@ from typing import Optional, List
 from app.services.whisper_stt import record_audio, transcribe_audio
 from app.services.classroom_image_analyzer import ClassroomImageAnalyzer
 from app.services.llm_chain import multimodal_chain
-from app.services.context_manager import context_manager
+from app.services.context_manager import context_manager, cache_manager
 from app.config.system_config import config
 from supabase import create_client, Client
 from sentence_transformers import SentenceTransformer
@@ -19,6 +19,13 @@ import asyncio
 import time
 from pydub import AudioSegment
 import io
+from app.config.openvino_config import OpenVINOConfig
+from transformers import AutoTokenizer
+try:
+    from optimum.intel.openvino import OVModelForFeatureExtraction
+    openvino_available = True
+except ImportError:
+    openvino_available = False
 
 
 logging.basicConfig(
@@ -36,10 +43,36 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are required.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-embedding_model = SentenceTransformer(config.EMBEDDING_MODEL)
 
-def get_embedding(text):
-    return embedding_model.encode(text).tolist()
+if OpenVINOConfig.should_use_openvino() and openvino_available:
+    try:
+        openvino_cache_path = OpenVINOConfig.get_model_cache_path(config.EMBEDDING_MODEL)
+        if os.path.exists(openvino_cache_path) and not OpenVINOConfig.should_export_models():
+            logger.info(f"Loading OpenVINO optimized embedding model from cache: {openvino_cache_path}")
+            embedding_model = OVModelForFeatureExtraction.from_pretrained(openvino_cache_path)
+            tokenizer = AutoTokenizer.from_pretrained(openvino_cache_path)
+        else:
+            logger.info("Exporting embedding model to OpenVINO format...")
+            os.makedirs(openvino_cache_path, exist_ok=True)
+            embedding_model = OVModelForFeatureExtraction.from_pretrained(config.EMBEDDING_MODEL, export=True)
+            embedding_model.save_pretrained(openvino_cache_path)
+            tokenizer = AutoTokenizer.from_pretrained(config.EMBEDDING_MODEL)
+            tokenizer.save_pretrained(openvino_cache_path)
+            logger.info(f"OpenVINO embedding model saved to: {openvino_cache_path}")
+        logger.info("OpenVINO optimized embedding model loaded successfully")
+        def get_embedding(text):
+            encoded = tokenizer(text, return_tensors="np", padding="max_length", truncation=True, max_length=128)
+            embedding = embedding_model(**encoded).squeeze(0)
+            return embedding[0].tolist() if hasattr(embedding, 'tolist') else embedding.tolist()
+    except Exception as e:
+        logger.warning(f"OpenVINO embedding model not available or failed: {e}\nFalling back to SentenceTransformer.")
+        embedding_model = SentenceTransformer(config.EMBEDDING_MODEL)
+        def get_embedding(text):
+            return embedding_model.encode(text).tolist()
+else:
+    embedding_model = SentenceTransformer(config.EMBEDDING_MODEL)
+    def get_embedding(text):
+        return embedding_model.encode(text).tolist()
 
 router = APIRouter()
 image_analyzer = ClassroomImageAnalyzer()
@@ -168,7 +201,7 @@ def validate_file_upload(file: UploadFile, file_type: str) -> bool:
     return True
 
 @router.post("/ask_text", response_model=TextResponse)
-async def ask_from_text(request: TextRequest, background_tasks: BackgroundTasks):
+async def ask_from_text(request: TextRequest, background_tasks: BackgroundTasks, output_lines: int = Query(None), max_tokens: int = Query(None)):
     start_time = time.time()
     logger.info(f"[ask_text] Request received: {request.query[:50]}...")
     try:
@@ -176,6 +209,13 @@ async def ask_from_text(request: TextRequest, background_tasks: BackgroundTasks)
         if not clean_query:
             raise HTTPException(status_code=400, detail="Query cannot be empty")
         logger.info(f"[ask_text] Cleaned query: {clean_query[:50]}...")
+        cached = cache_manager.get_text(clean_query)
+        if cached:
+            logger.info("[ask_text] Returning cached response.")
+            if output_lines is not None:
+                cached = '\n'.join(cached.split('\n')[:output_lines])
+            return TextResponse(response=cached, input_type="text")
+        
         background_tasks.add_task(store_query_embedding, clean_query)
         latest_image_context = context_manager.get_latest_image_context()
         model_start = time.time()
@@ -183,10 +223,15 @@ async def ask_from_text(request: TextRequest, background_tasks: BackgroundTasks)
         response = multimodal_chain.process_multimodal_input(
             query=clean_query,
             image_analysis=latest_image_context,
-            input_type="text"
+            input_type="text",
+            max_tokens=max_tokens
         )
         model_time = time.time() - model_start
         logger.info(f"[ask_text] LLM response received in {model_time:.2f}s")
+        cache_manager.set_text(clean_query, response)
+        # Post-process for output_lines
+        if output_lines is not None:
+            response = '\n'.join(response.split('\n')[:output_lines])
         total_time = time.time() - start_time
         logger.info(f"[ask_text] Sending response in {total_time:.2f}s: {response[:100]}...")
         return TextResponse(response=response, input_type="text")
@@ -195,7 +240,7 @@ async def ask_from_text(request: TextRequest, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/ask/voice", response_model=VoiceResponse)
-async def ask_from_voice(file: UploadFile = File(...)):
+async def ask_from_voice(file: UploadFile = File(...), output_lines: int = Query(None), max_tokens: int = Query(None)):
     start_time = time.time()
     temp_path = "temp_audio.wav"
     session_id = str(uuid.uuid4())
@@ -203,55 +248,100 @@ async def ask_from_voice(file: UploadFile = File(...)):
     try:
         if not validate_file_upload(file, "audio"):
             raise HTTPException(status_code=400, detail="Invalid audio file type")
-        
         contents = await file.read()
         logger.info(f"[ask_voice] Read {len(contents)} bytes of audio data")
-        
-        # Convert audio to wav
+        cached_transcription = cache_manager.get_audio(contents)
+        if cached_transcription:
+            logger.info("[ask_voice] Returning cached transcription.")
+            clean_transcription = sanitize_query(cached_transcription)
+            context_manager.add_voice_transcription(session_id, clean_transcription)
+            # Get cached response for this transcription
+            cached_response = cache_manager.get_text(clean_transcription)
+            if cached_response:
+                logger.info("[ask_voice] Returning cached response for transcription.")
+                response = cached_response
+            else:
+                model_start = time.time()
+                logger.info("[ask_voice] Calling LLM for cached transcription...")
+                response = multimodal_chain.process_multimodal_input(
+                    query=clean_transcription,
+                    voice_transcription=clean_transcription,
+                    input_type="voice",
+                    max_tokens=max_tokens if max_tokens is not None else 60
+                )
+                cache_manager.set_text(clean_transcription, response)
+                model_time = time.time() - model_start
+                logger.info(f"[ask_voice] LLM response for cached transcription in {model_time:.2f}s")
+            
+            if output_lines is not None:
+                response = '\n'.join(response.split('\n')[:output_lines])
+            return VoiceResponse(
+                response=response,
+                transcription=clean_transcription,
+                input_type="voice",
+                session_id=session_id
+            )
         try:
             logger.info("[ask_voice] Converting audio to wav format...")
-            # Try to detect format from content type or filename
             format_hint = "webm"
             if file.content_type and "audio/" in file.content_type:
                 format_hint = file.content_type.split("/")[-1].split(";")[0]
             elif file.filename and "." in file.filename:
                 format_hint = file.filename.split(".")[-1]
-            
             logger.info(f"[ask_voice] Using format hint: {format_hint}")
-            audio = AudioSegment.from_file(
-                io.BytesIO(contents),
-                format=format_hint,
-                codec="opus" if format_hint == "webm" else None
-            )
-            audio = audio.set_frame_rate(16000)  # Ensure 16kHz sample rate for Whisper
-            audio.export(temp_path, format="wav", parameters=["-ac", "1"])  # Force mono channel
-            logger.info(f"[ask_voice] Successfully converted to wav: {temp_path}")
+            
+            # Try different audio formats if the first one fails
+            conversion_success = False
+            for attempt_format in [format_hint, "webm", "mp4", "wav"]:
+                try:
+                    audio = AudioSegment.from_file(
+                        io.BytesIO(contents),
+                        format=attempt_format,
+                        codec="opus" if attempt_format == "webm" else None
+                    )
+                    audio = audio.set_frame_rate(16000)
+                    audio.export(temp_path, format="wav", parameters=["-ac", "1"])
+                    logger.info(f"[ask_voice] Successfully converted to wav using format: {attempt_format}")
+                    conversion_success = True
+                    break
+                except Exception as format_error:
+                    logger.warning(f"[ask_voice] Failed to convert with format {attempt_format}: {format_error}")
+                    continue
+            
+            if not conversion_success:
+                raise Exception("All audio format conversion attempts failed")
+                
         except Exception as e:
             logger.error(f"[ask_voice] Audio conversion failed: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=400,
-                detail=f"Could not process audio format. Please ensure you're sending a WebM/Opus format. Error: {str(e)}"
+                detail=f"Could not process audio format. Please ensure you're sending a supported audio format. Error: {str(e)}"
             )
-
         logger.info("[ask_voice] Starting transcription...")
         transcribe_start = time.time()
         transcription = transcribe_audio(temp_path)
         transcribe_time = time.time() - transcribe_start
         logger.info(f"[ask_voice] Transcribed text in {transcribe_time:.2f}s: {transcription[:100]}")
+        cache_manager.set_audio(contents, transcription)
         clean_transcription = sanitize_query(transcription)
+        logger.info(f"[ask_voice] Cleaned transcription (after sanitize_query): {clean_transcription}")
         context_manager.add_voice_transcription(session_id, clean_transcription)
         model_start = time.time()
+        logger.info(f"[ask_voice] Text sent to LLM: {clean_transcription}")
         logger.info("[ask_voice] Calling LLM...")
         response = multimodal_chain.process_multimodal_input(
             query=clean_transcription,
             voice_transcription=clean_transcription,
-            input_type="voice"
+            input_type="voice",
+            max_tokens=max_tokens if max_tokens is not None else 60
         )
+        if output_lines is not None:
+            response = '\n'.join(response.split('\n')[:output_lines])
         model_time = time.time() - model_start
         total_time = time.time() - start_time
         logger.info(f"[ask_voice] LLM response in {model_time:.2f}s, total time {total_time:.2f}s")
         return VoiceResponse(
-            response=response, 
+            response=response,
             transcription=clean_transcription,
             input_type="voice",
             session_id=session_id
@@ -267,7 +357,9 @@ async def ask_from_voice(file: UploadFile = File(...)):
 @router.post("/ask/image", response_model=ImageResponse)
 async def ask_from_image(
     file: UploadFile = File(...),
-    query: Optional[str] = Form("Please analyze this image and provide a detailed description.")
+    query: Optional[str] = Form("Please analyze this image and provide a detailed description."),
+    output_lines: int = Query(None),
+    max_tokens: int = Query(None)
 ):
     start_time = time.time()
     image_id = str(uuid.uuid4())
@@ -276,28 +368,68 @@ async def ask_from_image(
     try:
         if not validate_file_upload(file, "image"):
             raise HTTPException(status_code=400, detail="Invalid image file type")
-        clean_query = sanitize_query(query) if query else "Please analyze this image and provide a detailed description."
+        user_text = query.strip() if query and query.strip() else None
+        default_prompt = "Please analyze this image and provide a detailed description."
+        # If user_text is not the default, combine both for the LLM
+        if user_text and user_text != default_prompt:
+            clean_query = f"{default_prompt}\nUser note: {user_text}"
+        else:
+            clean_query = default_prompt
         contents = await file.read()
         if not contents:
             raise HTTPException(status_code=400, detail="Empty file received")
+        cached_analysis = cache_manager.get_image(contents)
+        if cached_analysis:
+            logger.info("[ask_image] Returning cached analysis.")
+            # Get cached response for this analysis
+            analysis_key = f"image_analysis_{hash(str(cached_analysis))}"
+            cached_response = cache_manager.get_text(analysis_key)
+            if cached_response:
+                logger.info("[ask_image] Returning cached response for analysis.")
+                response = cached_response
+            else:
+                model_start = time.time()
+                logger.info("[ask_image] Calling LLM for cached analysis...")
+                response = multimodal_chain.process_multimodal_input(
+                    query=clean_query,
+                    image_analysis=cached_analysis,
+                    input_type="image",
+                    max_tokens=max_tokens if max_tokens is not None else 60
+                )
+                cache_manager.set_text(analysis_key, response)
+                model_time = time.time() - model_start
+                logger.info(f"[ask_image] LLM response for cached analysis in {model_time:.2f}s")
+            
+            if output_lines is not None:
+                response = '\n'.join(response.split('\n')[:output_lines])
+            return ImageResponse(
+                response=response,
+                analysis=cached_analysis,
+                input_type="image",
+                image_id=image_id
+            )
         temp_path = f"temp_{image_id}.jpg"
         with open(temp_path, "wb") as f:
             f.write(contents)
         logger.info("[ask_image] File saved, starting analysis...")
         analysis_start = time.time()
-        analysis_result = image_analyzer.analyze_image_comprehensive(temp_path)
+        analysis_result = image_analyzer.analyze_image_comprehensive(temp_path, user_text=user_text)
         analysis_time = time.time() - analysis_start
         logger.info(f"[ask_image] Image analysis in {analysis_time:.2f}s")
         if 'error' in analysis_result:
             raise HTTPException(status_code=500, detail=analysis_result['error'])
+        cache_manager.set_image(contents, analysis_result)
         context_manager.add_image_analysis(image_id, analysis_result)
         model_start = time.time()
         logger.info("[ask_image] Calling LLM...")
         response = multimodal_chain.process_multimodal_input(
             query=clean_query,
             image_analysis=analysis_result,
-            input_type="image"
+            input_type="image",
+            max_tokens=max_tokens if max_tokens is not None else 60
         )
+        if output_lines is not None:
+            response = '\n'.join(response.split('\n')[:output_lines])
         model_time = time.time() - model_start
         total_time = time.time() - start_time
         logger.info(f"[ask_image] LLM response in {model_time:.2f}s, total time {total_time:.2f}s")

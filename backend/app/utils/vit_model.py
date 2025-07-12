@@ -4,9 +4,15 @@ import torch.nn as nn
 import os
 from torchvision import transforms
 from app.config.openvino_config import OpenVINOConfig
+import logging
+
+logger = logging.getLogger("vit_model")
+logging.basicConfig(level=logging.INFO)
 
 def load_vit_model(weights_path):
     try:
+        # Force CPU for ViT model due to limited GPU memory
+        device = torch.device('cpu')
         if OpenVINOConfig.should_use_openvino():
             try:
                 from optimum.intel import OVModelForImageClassification
@@ -15,16 +21,16 @@ def load_vit_model(weights_path):
                 # Check if OpenVINO model already exists
                 openvino_cache_path = OpenVINOConfig.get_model_cache_path("vit_b_16")
                 if os.path.exists(openvino_cache_path) and not OpenVINOConfig.should_export_models():
-                    print(f"Loading OpenVINO optimized ViT from cache: {openvino_cache_path}")
+                    logger.info(f"Loading OpenVINO optimized ViT from cache: {openvino_cache_path}")
                     model = OVModelForImageClassification.from_pretrained(openvino_cache_path)
                     processor = AutoImageProcessor.from_pretrained(openvino_cache_path)
                 else:
-                    print("Exporting ViT to OpenVINO format...")
+                    logger.info("Exporting ViT to OpenVINO format...")
                     # Load original model first
                     original_model = models.vit_b_16(pretrained=False)
                     original_model.heads.head = nn.Linear(original_model.heads.head.in_features, 2)
                     
-                    state_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
+                    state_dict = torch.load(weights_path, map_location=device, weights_only=True)
                     state_dict.pop('heads.head.weight', None)
                     state_dict.pop('heads.head.bias', None)
                     original_model.load_state_dict(state_dict, strict=False)
@@ -42,21 +48,21 @@ def load_vit_model(weights_path):
                     # Save the OpenVINO model
                     model.save_pretrained(openvino_cache_path)
                     processor.save_pretrained(openvino_cache_path)
-                    print(f"OpenVINO ViT model saved to: {openvino_cache_path}")
+                    logger.info(f"OpenVINO ViT model saved to: {openvino_cache_path}")
                 
                 # Load class names from dataset or use defaults
                 class_names = _load_class_names_from_dataset()
-                print(f"OpenVINO optimized ViT model loaded successfully")
+                logger.info(f"OpenVINO optimized ViT model loaded successfully")
                 return model, class_names, processor
                 
             except ImportError:
-                print("OpenVINO not available, falling back to PyTorch model")
+                logger.warning("OpenVINO not available, falling back to PyTorch model")
                 return _load_pytorch_vit(weights_path)
         else:
             return _load_pytorch_vit(weights_path)
             
     except Exception as e:
-        print(f"Error loading ViT model: {e}")
+        logger.error(f"Error loading ViT model: {e}")
         return None, [], None
 
 def _load_class_names_from_dataset():
@@ -123,6 +129,7 @@ def _load_pytorch_vit(weights_path):
         # Create model with correct number of classes
         model = models.vit_b_16(pretrained=False)
         model.heads.head = nn.Linear(model.heads.head.in_features, num_classes)
+        model.to(torch.device('cpu'))
         
         # Load state dict
         model.load_state_dict(state_dict)
@@ -140,7 +147,9 @@ def _load_pytorch_vit(weights_path):
         return model, ['landmark', 'historical'], None
 
 def predict_vit_class(image, model, class_names, processor=None, topk=3):
+    import time
     try:
+        start_time = time.time()
         if processor is not None:
             # OpenVINO model with processor
             if hasattr(image, 'convert'):
@@ -180,8 +189,10 @@ def predict_vit_class(image, model, class_names, processor=None, topk=3):
                 top_probs, top_idxs = probs.topk(topk)
                 results = [(class_names[idx], float(prob)) for idx, prob in zip(top_idxs[0], top_probs[0])]
             
+        inference_time = time.time() - start_time
+        logger.info(f"ViT prediction completed in {inference_time:.3f}s")
         return results
         
     except Exception as e:
-        print(f"Error in ViT prediction: {e}")
+        logger.error(f"Error in ViT prediction: {e}")
         return None 

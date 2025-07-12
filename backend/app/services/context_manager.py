@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 import json
 from app.config.system_config import config
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -170,5 +171,43 @@ class ContextManager:
             'newest_voice': max([data['timestamp'] for data in self.voice_context.values()]) if self.voice_context else None,
             'session_active': bool(self.current_session)
         }
+
+class SimpleCacheManager:
+    def __init__(self):
+        self.text_cache: Dict[str, Any] = {}
+        self.audio_cache: Dict[str, Any] = {}
+        self.image_cache: Dict[str, Any] = {}
+        self.topics: List[Dict[str, Any]] = []  # Store all topics/questions/answers
+
+    def get_text(self, question: str):
+        return self.text_cache.get(question)
+
+    def set_text(self, question: str, answer: Any):
+        self.text_cache[question] = answer
+        self.topics.append({'type': 'text', 'question': question, 'answer': answer})
+
+    def get_audio(self, audio_bytes: bytes):
+        key = hashlib.sha256(audio_bytes).hexdigest()
+        return self.audio_cache.get(key)
+
+    def set_audio(self, audio_bytes: bytes, transcription: Any):
+        key = hashlib.sha256(audio_bytes).hexdigest()
+        self.audio_cache[key] = transcription
+        self.topics.append({'type': 'audio', 'hash': key, 'transcription': transcription})
+
+    def get_image(self, image_bytes: bytes):
+        key = hashlib.sha256(image_bytes).hexdigest()
+        return self.image_cache.get(key)
+
+    def set_image(self, image_bytes: bytes, analysis: Any):
+        key = hashlib.sha256(image_bytes).hexdigest()
+        self.image_cache[key] = analysis
+        self.topics.append({'type': 'image', 'hash': key, 'analysis': analysis})
+
+    def get_all_topics(self):
+        return self.topics
+
+# Singleton instance
+cache_manager = SimpleCacheManager()
 
 context_manager = ContextManager() 
