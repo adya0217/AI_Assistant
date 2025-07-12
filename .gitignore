@@ -106,3 +106,9 @@ backend/models--*/
 backend/*.pt
 backend/*.pth
 backend/*.safetensors
+
+# OpenVINO model and cache files
+backend/openvino_models/
+*.onnx
+*.xml
+*.blob
